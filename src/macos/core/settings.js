@@ -9,6 +9,9 @@ var Settings = (function () {
   var TF = (typeof require !== 'undefined') ? require('./timefmt') : Timefmt;
 
   var PHASE_TYPES = ['inhale', 'exhale', 'hold'];
+  // Settings-window theme: 'system' (the unset default — the window resolves it from the OS at open),
+  // or an explicit 'light' / 'dark' the user picked. Themes the settings window only, not the orb.
+  var THEMES = ['system', 'light', 'dark'];
 
   // App release version (distinct from the settings-schema `version` field). Keep in sync with
   // src/win/core/settings.ps1 Get-AppVersion.
@@ -34,6 +37,7 @@ var Settings = (function () {
         opacity: 0.20,
         breakSizePctScreenHeight: 40,
         easing: 'ease-in-out',
+        theme: 'system',
         showLabel: true,
         showPhaseCountdown: true,
         showRemainingTimeUnderBubble: true,
@@ -102,6 +106,7 @@ var Settings = (function () {
     if (oa.expandedDiameterPx < oa.collapsedDiameterPx) oa.expandedDiameterPx = oa.collapsedDiameterPx;
     oa.opacity = clampNum(a.opacity, 0.05, 1, d.appearance.opacity);
     oa.breakSizePctScreenHeight = clampNum(a.breakSizePctScreenHeight, 5, 100, d.appearance.breakSizePctScreenHeight);
+    oa.theme = THEMES.indexOf(a.theme) !== -1 ? a.theme : d.appearance.theme;
     oa.showLabel = typeof a.showLabel === 'boolean' ? a.showLabel : d.appearance.showLabel;
     oa.showPhaseCountdown = typeof a.showPhaseCountdown === 'boolean' ? a.showPhaseCountdown : d.appearance.showPhaseCountdown;
     oa.showRemainingTimeUnderBubble = typeof a.showRemainingTimeUnderBubble === 'boolean' ? a.showRemainingTimeUnderBubble : d.appearance.showRemainingTimeUnderBubble;

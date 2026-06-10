@@ -45,6 +45,7 @@ function Get-DefaultSettings {
             opacity                      = 0.20
             breakSizePctScreenHeight     = 40
             easing                       = 'ease-in-out'
+            theme                        = 'system'   # settings-window theme: 'system' resolves from the OS at open; 'light'/'dark' = explicit. Window only.
             showLabel                    = $true
             showPhaseCountdown           = $true
             showRemainingTimeUnderBubble = $true
@@ -135,6 +136,8 @@ function Get-NormalizedSettings {
     if ($oa.expandedDiameterPx -lt $oa.collapsedDiameterPx) { $oa.expandedDiameterPx = $oa.collapsedDiameterPx }
     $oa.opacity = Get-ClampedNumber (Get-Prop $a 'opacity') 0.05 1 $d.appearance.opacity
     $oa.breakSizePctScreenHeight = Get-ClampedNumber (Get-Prop $a 'breakSizePctScreenHeight') 5 100 $d.appearance.breakSizePctScreenHeight
+    $themeRaw = Get-Prop $a 'theme'
+    $oa.theme = if (@('system', 'light', 'dark') -contains $themeRaw) { $themeRaw } else { $d.appearance.theme }
     $oa.showLabel = Get-BoolOr (Get-Prop $a 'showLabel') $d.appearance.showLabel
     $oa.showPhaseCountdown = Get-BoolOr (Get-Prop $a 'showPhaseCountdown') $d.appearance.showPhaseCountdown
     $oa.showRemainingTimeUnderBubble = Get-BoolOr (Get-Prop $a 'showRemainingTimeUnderBubble') $d.appearance.showRemainingTimeUnderBubble

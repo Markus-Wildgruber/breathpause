@@ -22,6 +22,7 @@ test('defaults match the SPEC schema', () => {
   assert.equal(d.appearance.font.size, 16);
   assert.equal(d.appearance.font.countdownSize, 13);
   assert.equal(d.appearance.font.pomodoroSize, 12);
+  assert.equal(d.appearance.theme, 'system');
   assert.equal(d.behavior.startOnBoot, false);
   assert.deepEqual(Object.keys(d.hotkeys).sort(), ['pauseResume', 'settings', 'skip', 'startStop']);
 });
@@ -38,6 +39,13 @@ test('normalize clamps longBreakEvery, font size; rejects bad longBreak timer', 
   assert.equal(s.appearance.font.family, 'Segoe UI Variable'); // empty -> default
   assert.equal(s.appearance.font.size, 72);            // clamped
   assert.equal(s.behavior.startOnBoot, true);
+});
+
+test('theme: keeps valid values, rejects unknown ones', () => {
+  assert.equal(st.normalize({ appearance: { theme: 'light' } }).appearance.theme, 'light');
+  assert.equal(st.normalize({ appearance: { theme: 'dark' } }).appearance.theme, 'dark');
+  assert.equal(st.normalize({ appearance: { theme: 'neon' } }).appearance.theme, 'system'); // unknown -> default
+  assert.equal(st.normalize({}).appearance.theme, 'system');
 });
 
 test('appVersion is a semver-ish string, distinct from schema version', () => {

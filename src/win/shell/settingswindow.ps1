@@ -1,4 +1,4 @@
-# shell/settingswindow - frosted tabbed settings window with live preview. WPF + WinForms ColorDialog.
+# shell/settingswindow - modern rail+cards settings window with live preview & OS-adaptive theme.
 # UNVERIFIED SCAFFOLDING - parse-checked only; verify on Windows via -Debug ('Build settings window').
 #
 # New-SettingsWindow($Settings,$Strings,$OnPreview,$OnSaved,$OnCancel,$OnQuit) returns a built
@@ -6,9 +6,12 @@
 #  - any edit -> $OnPreview <values> <strings>  (apply live, do NOT persist)
 #  - Save      -> $OnSaved   <values> <strings> (persist settings.json + strings.json) then close
 #  - Cancel/X  -> $OnCancel                     (revert the live preview)
-# Color editing: hex field + live swatch + a "Pick" button (built-in WinForms ColorDialog).
-# Tabs: Timers / Appearance / Colors / Patterns / Behavior / Hotkeys / Text.
-# Text-tab wording is saved to strings.json (separate file) so it can be translated independently.
+# Layout: a left navigation rail (Timers/Patterns/Appearance/Behavior/Text/About) + a content pane of
+# grouped cards (Win11-Settings style), replacing the old nested tabs. Appearance carries a sticky live
+# orb-preview card and a ☀/☾ theme toggle (top-right). Theme = settings WINDOW only; the orb keeps its
+# user colors. Theme palettes live in $script:SwPalettes; brushes are shared+mutable so ☀/☾ repaints live.
+# Color editing: hex field + live swatch + click-to-pick (built-in WinForms ColorDialog).
+# Text wording is saved to strings.json (separate file) so it can be translated independently.
 
 function New-SwText { param([string]$Value, [double]$Width = 90)
     $t = New-Object System.Windows.Controls.TextBox
@@ -44,6 +47,15 @@ function New-SwSlider { param([double]$Min, [double]$Max, [double]$Value, [strin
     return @{ row = $row; slider = $s }
 }
 
+# Wrap a control in a rounded bordered field (so a slider + its readout read as one field, not loose text).
+function New-SwFieldBox { param($Inner)
+    $b = New-Object System.Windows.Controls.Border
+    $b.CornerRadius = '7'; $b.Background = $script:SWBrushes.Field; $b.BorderBrush = $script:SWBrushes.Line
+    $b.BorderThickness = '1'; $b.Padding = '10,6,12,6'; $b.HorizontalAlignment = 'Left'; $b.VerticalAlignment = 'Center'
+    $b.Child = $Inner
+    return $b
+}
+
 # Two-thumb range slider over a fixed-width track ($Min..$Max integers) + a live "lo-hi unit"
 # readout. Current lo/hi live in the returned control's .Tag for read-back. Built-in WPF only.
 # Returns @{ row = <track + readout>; control = <canvas> } — caller adds .row, reads .control.Tag.
@@ -55,7 +67,7 @@ function New-SwRangeSlider { param([double]$Min, [double]$Max, [double]$Lo, [dou
     $canvas = New-Object System.Windows.Controls.Canvas
     $canvas.Width = $w; $canvas.Height = $h; $canvas.Background = [System.Windows.Media.Brushes]::Transparent
     $track = New-Object System.Windows.Controls.Border
-    $track.Height = 4; $track.CornerRadius = '2'; $track.Width = $w; $track.Background = (ConvertTo-Brush '#55FFFFFF')
+    $track.Height = 4; $track.CornerRadius = '2'; $track.Width = $w; $track.Background = $script:SWBrushes.Line
     [System.Windows.Controls.Canvas]::SetTop($track, ($h / 2 - 2)); [System.Windows.Controls.Canvas]::SetLeft($track, 0)
     $active = New-Object System.Windows.Controls.Border
     $active.Height = 4; $active.CornerRadius = '2'; $active.Background = $script:SWAccent
@@ -154,25 +166,161 @@ function New-SwHeader {
     $t.Text = $Text; $t.Foreground = $script:SWFore; $t.FontSize = 15; $t.FontWeight = 'SemiBold'; $t.Margin = '0,14,0,4'
     return $t
 }
-function New-SwTab { param([string]$Header)
-    $tab = New-Object System.Windows.Controls.TabItem
-    $tab.Header = $Header
-    $sv = New-Object System.Windows.Controls.ScrollViewer
-    $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Padding = '4'
-    $panel = New-Object System.Windows.Controls.StackPanel
-    $panel.Margin = '6'
-    $sv.Content = $panel; $tab.Content = $sv
-    return @{ tab = $tab; panel = $panel }
+
+# A grouped "card": a rounded surface panel with an optional bold section header. Returns
+# @{ card = <Border>; panel = <StackPanel> } — caller adds rows to .panel, adds .card to a pane.
+function New-SwCard { param([string]$Title)
+    $b = New-Object System.Windows.Controls.Border
+    $b.Background = $script:SWBrushes.CardBg; $b.CornerRadius = '12'; $b.BorderBrush = $script:SWBrushes.Line
+    $b.BorderThickness = '1'; $b.Margin = '0,0,0,14'; $b.Padding = '16,6,16,14'
+    $sp = New-Object System.Windows.Controls.StackPanel
+    if ($Title) {
+        $t = New-Object System.Windows.Controls.TextBlock
+        $t.Text = $Title; $t.FontWeight = 'SemiBold'; $t.FontSize = 13; $t.Foreground = $script:SWFore; $t.Opacity = 0.9; $t.Margin = '0,8,0,4'
+        [void]$sp.Children.Add($t)
+    }
+    $b.Child = $sp
+    return @{ card = $b; panel = $sp }
 }
-# A parent (group) tab whose content is its own TabControl of child tabs. Returns
-# @{ tab = <parent TabItem>; tabs = <inner TabControl> } — add child tabs to .tabs.
-function New-SwParentTab { param([string]$Header)
-    $tab = New-Object System.Windows.Controls.TabItem
-    $tab.Header = $Header
-    $inner = New-Object System.Windows.Controls.TabControl
-    $inner.Background = [System.Windows.Media.Brushes]::Transparent; $inner.BorderThickness = '0'; $inner.Margin = '0,8,0,0'
-    $tab.Content = $inner
-    return @{ tab = $tab; tabs = $inner }
+
+# A content pane: a title row (with an optional right-aligned control), an optional sticky element
+# pinned below the title, then a scrolling card list. Returns @{ root = <DockPanel>; cards = <StackPanel> }.
+function New-SwPane { param([string]$Title, $HeaderRight, $StickyTop)
+    $root = New-Object System.Windows.Controls.DockPanel
+    $root.LastChildFill = $true
+    $head = New-Object System.Windows.Controls.Grid
+    $head.Margin = '20,16,20,6'
+    [System.Windows.Controls.DockPanel]::SetDock($head, 'Top')
+    $h = New-Object System.Windows.Controls.TextBlock
+    $h.Text = $Title; $h.FontSize = 18; $h.FontWeight = 'SemiBold'; $h.Foreground = $script:SWBrushes.Fore
+    $h.HorizontalAlignment = 'Left'; $h.VerticalAlignment = 'Top'
+    [void]$head.Children.Add($h)
+    if ($HeaderRight) { $HeaderRight.HorizontalAlignment = 'Right'; $HeaderRight.VerticalAlignment = 'Top'; [void]$head.Children.Add($HeaderRight) }
+    [void]$root.Children.Add($head)
+    if ($StickyTop) { [System.Windows.Controls.DockPanel]::SetDock($StickyTop, 'Top'); [void]$root.Children.Add($StickyTop) }
+    $sv = New-Object System.Windows.Controls.ScrollViewer
+    $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Padding = '20,2,16,16'
+    $cards = New-Object System.Windows.Controls.StackPanel
+    $sv.Content = $cards
+    [void]$root.Children.Add($sv)   # fill (added last)
+    return @{ root = $root; cards = $cards }
+}
+
+# One rail navigation item: a clickable icon+label row. Stores itself in $script:SWNavItems[$Key].
+function New-SwNavItem { param([string]$Key, [char]$Glyph, [string]$Label)
+    $b = New-Object System.Windows.Controls.Border
+    $b.CornerRadius = '9'; $b.Padding = '12,10,12,10'; $b.Margin = '0,0,0,2'
+    $b.Cursor = [System.Windows.Input.Cursors]::Hand
+    $b.Background = [System.Windows.Media.Brushes]::Transparent   # non-null so the whole row hit-tests
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Orientation = 'Horizontal'
+    $ic = New-Object System.Windows.Controls.TextBlock
+    $ic.Text = [string]$Glyph; $ic.FontSize = 15; $ic.Width = 24; $ic.VerticalAlignment = 'Center'; $ic.Foreground = $script:SWBrushes.Muted
+    try { $ic.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe Fluent Icons, Segoe MDL2 Assets') } catch { }
+    $tx = New-Object System.Windows.Controls.TextBlock
+    $tx.Text = $Label; $tx.FontSize = 13.5; $tx.VerticalAlignment = 'Center'; $tx.Foreground = $script:SWBrushes.Muted
+    [void]$sp.Children.Add($ic); [void]$sp.Children.Add($tx)
+    $b.Child = $sp
+    $b.Tag = @{ key = $Key; icon = $ic; text = $tx }
+    $b.add_MouseLeftButtonUp({ Select-SwSection $args[0].Tag.key })
+    $b.add_MouseEnter({ if ($args[0].Tag.key -ne $script:SWSection) { $args[0].Background = $script:SWBrushes.Field } })
+    $b.add_MouseLeave({ if ($args[0].Tag.key -ne $script:SWSection) { $args[0].Background = [System.Windows.Media.Brushes]::Transparent } })
+    $script:SWNavItems[$Key] = $b
+    return $b
+}
+
+# Swap the visible content pane and repaint the rail's selection state.
+function Select-SwSection { param([string]$Key)
+    $script:SWSection = $Key
+    if ($script:SWPanes.ContainsKey($Key)) { $script:SWContent.Child = $script:SWPanes[$Key] }
+    foreach ($k in @($script:SWNavItems.Keys)) {
+        $it = $script:SWNavItems[$k]; $sel = ($k -eq $Key)
+        $it.Background = if ($sel) { $script:SWBrushes.RailSel } else { [System.Windows.Media.Brushes]::Transparent }
+        $fg = if ($sel) { $script:SWBrushes.RailSelFg } else { $script:SWBrushes.Muted }
+        $it.Tag.icon.Foreground = $fg; $it.Tag.text.Foreground = $fg
+        $it.Tag.text.FontWeight = if ($sel) { 'SemiBold' } else { 'Normal' }
+    }
+}
+
+# One segmented theme button (☀ / ☾). Click sets the persisted choice + repaints the window live.
+function New-SwSegButton { param([char]$Glyph, [string]$Theme, [string]$Tip)
+    $b = New-Object System.Windows.Controls.Border
+    $b.CornerRadius = '7'; $b.Width = 36; $b.Height = 30; $b.Cursor = [System.Windows.Input.Cursors]::Hand
+    $b.Background = [System.Windows.Media.Brushes]::Transparent; $b.ToolTip = $Tip
+    $t = New-Object System.Windows.Controls.TextBlock
+    $t.Text = [string]$Glyph; $t.FontSize = 15; $t.HorizontalAlignment = 'Center'; $t.VerticalAlignment = 'Center'; $t.Foreground = $script:SWBrushes.Muted
+    $b.Child = $t; $b.Tag = @{ theme = $Theme; label = $t }
+    $b.add_MouseLeftButtonUp({ $script:SWThemeChoice = $args[0].Tag.theme; Set-SwTheme $args[0].Tag.theme })
+    return $b
+}
+# The ☀/☾ segmented control (no 'System' button — the default is seeded from the OS at open).
+function New-SwSegToggle {
+    $wrap = New-Object System.Windows.Controls.Border
+    $wrap.CornerRadius = '9'; $wrap.Background = $script:SWBrushes.Seg; $wrap.Padding = '3'; $wrap.VerticalAlignment = 'Top'
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Orientation = 'Horizontal'
+    $script:SWSegLight = New-SwSegButton ([char]0x2600) 'light' 'Light'   # ☀
+    $script:SWSegDark = New-SwSegButton ([char]0x263E) 'dark' 'Dark'      # ☾
+    [void]$sp.Children.Add($script:SWSegLight); [void]$sp.Children.Add($script:SWSegDark)
+    $wrap.Child = $sp
+    return $wrap
+}
+# Highlight whichever segment matches the effective (resolved) theme.
+function Update-SwSeg { param([string]$Eff)
+    foreach ($b in @($script:SWSegLight, $script:SWSegDark)) {
+        if (-not $b) { continue }
+        $on = ($b.Tag.theme -eq $Eff)
+        $b.Background = if ($on) { $script:SWBrushes.SegSel } else { [System.Windows.Media.Brushes]::Transparent }
+        $b.Tag.label.Foreground = if ($on) { $script:SWBrushes.SegSelFg } else { $script:SWBrushes.Muted }
+    }
+}
+
+# Live orb preview card (static, accurate snapshot — no animation; mirrors the real orb's look).
+# Stores the orb/label/count for Update-SwPreview to drive. Returns the card Border.
+function New-SwOrbPreview {
+    $card = New-Object System.Windows.Controls.Border
+    $card.Background = $script:SWBrushes.CardBg; $card.CornerRadius = '12'; $card.BorderBrush = $script:SWBrushes.Line
+    $card.BorderThickness = '1'; $card.Margin = '20,0,20,12'; $card.Padding = '12,10,12,10'
+    $g = New-Object System.Windows.Controls.StackPanel; $g.Orientation = 'Horizontal'
+    $orb = New-Object System.Windows.Controls.Border
+    $orb.Width = 96; $orb.Height = 96; $orb.CornerRadius = '48'; $orb.Margin = '4,2,18,2'; $orb.VerticalAlignment = 'Center'
+    try { $orb.Background = ConvertTo-Brush '#4FC3F7' } catch { }
+    $stack = New-Object System.Windows.Controls.StackPanel; $stack.VerticalAlignment = 'Center'; $stack.HorizontalAlignment = 'Center'
+    $lab = New-Object System.Windows.Controls.TextBlock
+    $lab.Text = 'Breathe in'; $lab.FontWeight = 'SemiBold'; $lab.HorizontalAlignment = 'Center'
+    $cnt = New-Object System.Windows.Controls.TextBlock
+    $cnt.Text = '0:04'; $cnt.HorizontalAlignment = 'Center'; $cnt.Opacity = 0.92
+    try { $lab.Foreground = ConvertTo-Brush '#FFFFFF'; $cnt.Foreground = ConvertTo-Brush '#FFFFFF' } catch { }
+    [void]$stack.Children.Add($lab); [void]$stack.Children.Add($cnt); $orb.Child = $stack
+    $cap = New-Object System.Windows.Controls.StackPanel; $cap.VerticalAlignment = 'Center'
+    $ct = New-Object System.Windows.Controls.TextBlock
+    $ct.Text = 'Live preview'; $ct.FontWeight = 'SemiBold'; $ct.Foreground = $script:SWBrushes.Fore
+    $cs = New-Object System.Windows.Controls.TextBlock
+    $cs.Text = 'Reflects your colors, opacity, font & labels'; $cs.Foreground = $script:SWBrushes.Muted
+    $cs.FontSize = 12; $cs.TextWrapping = 'Wrap'; $cs.MaxWidth = 280; $cs.Margin = '0,2,0,0'
+    [void]$cap.Children.Add($ct); [void]$cap.Children.Add($cs)
+    [void]$g.Children.Add($orb); [void]$g.Children.Add($cap)
+    $card.Child = $g
+    $script:SWPreviewOrb = $orb; $script:SWPreviewLabel = $lab; $script:SWPreviewCount = $cnt
+    return $card
+}
+# Repaint the in-window orb preview from the current control values (colors, opacity, font, labels).
+function Update-SwPreview {
+    if (-not $script:SWPreviewOrb) { return }
+    try { if (Test-HexColor $script:SWWorkFill.Text) { $script:SWPreviewOrb.Background = ConvertTo-Brush $script:SWWorkFill.Text } } catch { }
+    try { $script:SWPreviewOrb.Opacity = [double]$script:SWOpacity.Value } catch { }
+    try {
+        if (Test-HexColor $script:SWTextColor.Text) {
+            $tb = ConvertTo-Brush $script:SWTextColor.Text
+            $script:SWPreviewLabel.Foreground = $tb; $script:SWPreviewCount.Foreground = $tb
+        }
+    } catch { }
+    try {
+        $fam = New-Object System.Windows.Media.FontFamily([string]$script:SWFontFamily.SelectedItem)
+        $script:SWPreviewLabel.FontFamily = $fam; $script:SWPreviewCount.FontFamily = $fam
+    } catch { }
+    try { $script:SWPreviewLabel.FontSize = [double]$script:SWFontSize.Value } catch { }
+    try { $script:SWPreviewCount.FontSize = [double]$script:SWCountdownSize.Value } catch { }
+    $script:SWPreviewLabel.Visibility = if ([bool]$script:SWShowLabel.IsChecked) { 'Visible' } else { 'Collapsed' }
+    $script:SWPreviewCount.Visibility = if ([bool]$script:SWShowPhase.IsChecked) { 'Visible' } else { 'Collapsed' }
 }
 
 # Open the built-in Windows color picker; seed from the current hex, preserve alpha for tints.
@@ -347,6 +495,7 @@ function Get-SwValues {
     $new.appearance.collapsedDiameterPx = [int]$script:SWDiameter.Tag.lo
     $new.appearance.expandedDiameterPx = [int]$script:SWDiameter.Tag.hi
     $new.appearance.breakSizePctScreenHeight = [double]$script:SWBreakPct.Value
+    $new.appearance.theme = $script:SWThemeChoice   # persist the user's explicit pick (or the original 'system')
     $pr = 0.0; if ([double]::TryParse($script:SWPosRight.Text, [ref]$pr)) { $new.position.fromRight = $pr }
     $pt = 0.0; if ([double]::TryParse($script:SWPosTop.Text, [ref]$pt)) { $new.position.fromTop = $pt }
     if ($script:SWFontFamily.SelectedItem) { $new.appearance.font.family = [string]$script:SWFontFamily.SelectedItem }
@@ -394,19 +543,65 @@ function Get-SwStrings {
     return (Get-NormalizedStrings $raw)
 }
 
-function Invoke-SwPreview { if ($script:SWOnPreview) { & $script:SWOnPreview (Get-SwValues) (Get-SwStrings) } }
+function Invoke-SwPreview {
+    Update-SwPreview
+    if ($script:SWOnPreview) { & $script:SWOnPreview (Get-SwValues) (Get-SwStrings) }
+}
 
-# Modern implicit styles (rounded buttons w/ hover+press, dark rounded textboxes, flat tabs).
-# Built-in WPF only. Applied as the window's implicit resources; degrades gracefully if the
-# XAML ever fails to parse (settings window still opens with default controls).
+# --- Theme: OS detection + shared mutable brushes so ☀/☾ repaints the whole window live. ---
+
+# Read the Windows app theme from the registry. Returns 'light' or 'dark' (defaults to 'dark').
+function Get-SystemTheme {
+    try {
+        $v = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'AppsUseLightTheme' -ErrorAction Stop
+        if ([int]$v -eq 1) { return 'light' }
+        return 'dark'
+    }
+    catch { return 'dark' }
+}
+# Resolve a stored preference to a concrete theme: explicit 'light'/'dark' wins; 'system' reads the OS.
+function Resolve-SwTheme { param([string]$Pref)
+    if ($Pref -eq 'light' -or $Pref -eq 'dark') { return $Pref }
+    return (Get-SystemTheme)
+}
+
+# #RRGGBB or #RRGGBBAA -> System.Windows.Media.Color (alpha last, matching ConvertTo-Brush's convention).
+function ConvertTo-SwColor { param([string]$Hex)
+    $h = $Hex.TrimStart('#'); $a = 255
+    if ($h.Length -ge 8) { $a = [Convert]::ToInt32($h.Substring(6, 2), 16) }
+    return [System.Windows.Media.Color]::FromArgb($a, [Convert]::ToInt32($h.Substring(0, 2), 16), [Convert]::ToInt32($h.Substring(2, 2), 16), [Convert]::ToInt32($h.Substring(4, 2), 16))
+}
+
+# Token -> hex per theme. Dark is the original look; light is neutral grays + a deeper blue accent
+# (cyan washes out on white). Themes the settings window chrome only — never the orb's own colors.
+$script:SwPalettes = @{
+    dark  = @{ Fore = '#F2F2F2'; Muted = '#9AA0AA'; Accent = '#4FC3F7'; AccentFg = '#06222C'; Card = '#1C1C1E'; Pane = '#161619'; Bar = '#2D2D3C'; Rail = '#121215'; CardBg = '#232327'; Field = '#2A2A2E'; Line = '#3A3A40'; Seg = '#2A2A2E'; SegSel = '#4A4A52'; SegSelFg = '#FFFFFF'; RailSel = '#4FC3F7'; RailSelFg = '#06222C' }
+    light = @{ Fore = '#1A1A1F'; Muted = '#5A5A63'; Accent = '#0A6CC9'; AccentFg = '#FFFFFF'; Card = '#F3F3F6'; Pane = '#FBFBFD'; Bar = '#E7E7EE'; Rail = '#ECECF2'; CardBg = '#FFFFFF'; Field = '#FFFFFF'; Line = '#D8D8E0'; Seg = '#E2E2EA'; SegSel = '#FFFFFF'; SegSelFg = '#1A1A1F'; RailSel = '#0A6CC9'; RailSelFg = '#FFFFFF' }
+}
+$script:SwThemeTokens = @('Fore', 'Muted', 'Accent', 'AccentFg', 'Card', 'Pane', 'Bar', 'Rail', 'CardBg', 'Field', 'Line', 'Seg', 'SegSel', 'SegSelFg', 'RailSel', 'RailSelFg')
+
+# Apply a theme by mutating the shared brushes in place — every control referencing them repaints.
+function Set-SwTheme { param([string]$Theme)
+    $eff = Resolve-SwTheme $Theme
+    $pal = $script:SwPalettes[$eff]
+    foreach ($k in $script:SwThemeTokens) {
+        if ($script:SWBrushes.ContainsKey($k)) { $script:SWBrushes[$k].Color = (ConvertTo-SwColor $pal[$k]) }
+    }
+    $script:SWEffectiveTheme = $eff
+    Update-SwSeg $eff
+}
+
+# Modern implicit styles (rounded buttons w/ hover+press, themed rounded textboxes, thin scrollbars,
+# flat caption buttons). Colors come from {DynamicResource Sw*} brushes injected below, so a theme
+# switch updates everything. Built-in WPF only; degrades gracefully if the XAML fails to parse.
 function Set-SwModernStyles {
-    param($Win)
+    param($Win, [string]$ThemePref)
     $xaml = @'
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Style TargetType="{x:Type Button}">
-    <Setter Property="Foreground" Value="#F2F2F2"/>
-    <Setter Property="Background" Value="#2EFFFFFF"/>
+    <Setter Property="Foreground" Value="{DynamicResource SwFore}"/>
+    <Setter Property="Background" Value="{DynamicResource SwField}"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="Padding" Value="14,6"/>
     <Setter Property="Cursor" Value="Hand"/>
@@ -425,10 +620,10 @@ function Set-SwModernStyles {
     </Setter>
   </Style>
   <Style TargetType="{x:Type TextBox}">
-    <Setter Property="Foreground" Value="#F2F2F2"/>
-    <Setter Property="CaretBrush" Value="#F2F2F2"/>
-    <Setter Property="Background" Value="#22FFFFFF"/>
-    <Setter Property="BorderBrush" Value="#55FFFFFF"/>
+    <Setter Property="Foreground" Value="{DynamicResource SwFore}"/>
+    <Setter Property="CaretBrush" Value="{DynamicResource SwFore}"/>
+    <Setter Property="Background" Value="{DynamicResource SwField}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource SwLine}"/>
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="Padding" Value="6,4"/>
     <Setter Property="Template">
@@ -441,13 +636,9 @@ function Set-SwModernStyles {
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="{x:Type TabControl}">
-    <Setter Property="Background" Value="Transparent"/>
-    <Setter Property="BorderThickness" Value="0"/>
-  </Style>
   <!-- Windows-style caption buttons: flat, square, subtle hover. Close goes red on hover. -->
   <Style x:Key="CaptionButton" TargetType="{x:Type Button}">
-    <Setter Property="Foreground" Value="#F2F2F2"/>
+    <Setter Property="Foreground" Value="{DynamicResource SwFore}"/>
     <Setter Property="Background" Value="Transparent"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="FontSize" Value="13"/>
@@ -459,7 +650,7 @@ function Set-SwModernStyles {
             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#33FFFFFF"/></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#33808080"/></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -487,9 +678,9 @@ function Set-SwModernStyles {
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="{x:Type Thumb}">
-          <Border x:Name="th" CornerRadius="4" Background="#40FFFFFF" Margin="2"/>
+          <Border x:Name="th" CornerRadius="4" Background="#80808080" Margin="2"/>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="th" Property="Background" Value="#80FFFFFF"/></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="th" Property="Background" Value="#B0808080"/></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -524,32 +715,22 @@ function Set-SwModernStyles {
       </Trigger>
     </Style.Triggers>
   </Style>
-  <Style TargetType="{x:Type TabItem}">
-    <Setter Property="Foreground" Value="#CFCFCF"/>
-    <Setter Property="Template">
-      <Setter.Value>
-        <ControlTemplate TargetType="{x:Type TabItem}">
-          <Border x:Name="bd" Background="Transparent" CornerRadius="6" Padding="12,6" Margin="0,0,4,0">
-            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property="IsSelected" Value="True">
-              <Setter TargetName="bd" Property="Background" Value="#33FFFFFF"/>
-              <Setter Property="Foreground" Value="#FFFFFF"/>
-            </Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/></Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
 </ResourceDictionary>
 '@
-    try { $Win.Resources = [System.Windows.Markup.XamlReader]::Parse($xaml) } catch { }
+    try { $rd = [System.Windows.Markup.XamlReader]::Parse($xaml) } catch { $rd = New-Object System.Windows.ResourceDictionary }
+    # Inject the shared mutable theme brushes the styles (and imperative controls) reference.
+    $script:SWBrushes = @{}
+    foreach ($tok in $script:SwThemeTokens) {
+        $br = New-Object System.Windows.Media.SolidColorBrush
+        $rd["Sw$tok"] = $br
+        $script:SWBrushes[$tok] = $br
+    }
+    $Win.Resources = $rd
+    Set-SwTheme $ThemePref   # paints the brushes (resolves 'system' from the OS)
 }
 
 # Decode the app orb logo (embedded in tray.ps1 as $script:AppIconPngB64) into a WPF ImageSource,
-# shared by the window's taskbar icon, the settings header and the Info tab. Frozen so it's reusable.
+# shared by the window's taskbar icon, the settings header and the About page. Frozen so it's reusable.
 function New-AppIconImage {
     $ms = New-Object System.IO.MemoryStream(, [Convert]::FromBase64String($script:AppIconPngB64))
     $bi = New-Object System.Windows.Media.Imaging.BitmapImage
@@ -557,7 +738,7 @@ function New-AppIconImage {
     return $bi
 }
 
-# Read-only foreground-styled text line for the Info tab (New-SwText makes an editable TextBox).
+# Read-only foreground-styled text line for the About page (New-SwText makes an editable TextBox).
 function New-SwInfoText { param([string]$Text)
     $t = New-Object System.Windows.Controls.TextBlock
     $t.Text = $Text; $t.Foreground = $script:SWFore; $t.VerticalAlignment = 'Center'; $t.TextWrapping = 'Wrap'
@@ -566,8 +747,6 @@ function New-SwInfoText { param([string]$Text)
 
 function New-SettingsWindow {
     param($Settings, $Strings, [scriptblock]$OnPreview, [scriptblock]$OnSaved, [scriptblock]$OnCancel, [scriptblock]$OnQuit)
-    $script:SWFore = ConvertTo-Brush '#F2F2F2'
-    $script:SWAccent = ConvertTo-Brush '#4FC3F7'
     $script:SWSettings = $Settings
     $script:SWStrings = if ($Strings) { Get-NormalizedStrings $Strings } else { Get-DefaultStrings }
     $script:SWOnPreview = $OnPreview
@@ -575,30 +754,40 @@ function New-SettingsWindow {
     $script:SWOnCancel = $OnCancel
     $script:SWOnQuit = $OnQuit
     $script:SWSaved = $false
+    $script:SWNavItems = @{}; $script:SWPanes = @{}; $script:SWSection = $null
+    $script:SWPreviewOrb = $null
+    # Theme preference persisted in settings.json: 'system' (seed from OS, kept until the user picks),
+    # or an explicit 'light'/'dark'. The ☀/☾ toggle writes light/dark; never re-introduces 'system'.
+    $script:SWThemeChoice = $Settings.appearance.theme
 
     $win = New-Object System.Windows.Window
     $win.Title = 'breathpause settings'; $win.WindowStyle = 'None'; $win.AllowsTransparency = $true
     $win.Background = [System.Windows.Media.Brushes]::Transparent
-    $win.Width = 540; $win.Height = 560; $win.WindowStartupLocation = 'CenterScreen'; $win.Topmost = $true
+    $win.Width = 720; $win.Height = 600; $win.WindowStartupLocation = 'CenterScreen'; $win.Topmost = $true
     # Give the borderless settings window its own taskbar button (the orb overlay stays hidden from
     # the taskbar). The favicon makes it identifiable rather than a generic PowerShell-host entry.
     $win.ShowInTaskbar = $true
     try { $win.Icon = New-AppIconImage } catch { }
-    Set-SwModernStyles $win
+    $script:SWWin = $win
+    Set-SwModernStyles $win $script:SWThemeChoice   # build theme brushes + apply (resolves 'system')
+
+    # Legacy aliases used by the reused control builders — point them at the shared mutable brushes
+    # so those controls theme live too.
+    $script:SWFore = $script:SWBrushes.Fore
+    $script:SWAccent = $script:SWBrushes.Accent
 
     $card = New-Object System.Windows.Controls.Border
-    # Near-opaque rounded panel. We deliberately do NOT enable the rectangular DWM acrylic on this
-    # window (it would paint a square frosted region behind these rounded corners); the card alone
-    # gives perfectly smooth WPF-rendered rounded corners.
-    $card.CornerRadius = '12'; $card.Background = (ConvertTo-Brush '#1C1C1EF7')
+    # Smooth WPF-rendered rounded corners (no DWM acrylic — it would paint a square frosted region
+    # behind these rounded corners).
+    $card.CornerRadius = '12'; $card.Background = $script:SWBrushes.Card
     $win.Content = $card
     $root = New-Object System.Windows.Controls.DockPanel
     $card.Child = $root
 
-    # Title bar — a colored header strip (rounded to match the card top) with the app icon + title on
+    # Title bar — colored header strip (rounded to match the card top) with the app icon + title on
     # the left and Windows-style minimize/close caption buttons on the right. Drag to move.
     $barHost = New-Object System.Windows.Controls.Border
-    $barHost.CornerRadius = '12,12,0,0'; $barHost.Background = (ConvertTo-Brush '#2D2D3C')
+    $barHost.CornerRadius = '12,12,0,0'; $barHost.Background = $script:SWBrushes.Bar
     [System.Windows.Controls.DockPanel]::SetDock($barHost, 'Top')
     $bar = New-Object System.Windows.Controls.Grid
     $bar.Height = 42; $barHost.Child = $bar
@@ -609,7 +798,6 @@ function New-SettingsWindow {
     $title = New-Object System.Windows.Controls.TextBlock
     $title.Text = 'breathpause'; $title.Foreground = $script:SWFore; $title.FontWeight = 'SemiBold'
     $title.FontSize = 14; $title.VerticalAlignment = 'Center'; $title.Margin = '44,0,0,0'
-    # Caption buttons, right-aligned. Minimize sends the window to the taskbar; close shuts it.
     $caption = New-Object System.Windows.Controls.StackPanel
     $caption.Orientation = 'Horizontal'; $caption.HorizontalAlignment = 'Right'; $caption.VerticalAlignment = 'Top'
     $min = New-Object System.Windows.Controls.Button
@@ -647,84 +835,112 @@ function New-SettingsWindow {
     $cancel.add_Click({ $script:SWWin.Close() })
     $save = New-Object System.Windows.Controls.Button
     $save.Content = 'Save'; $save.Width = 92; $save.Height = 32; $save.Margin = '10,0,0,0'; $save.IsDefault = $true
-    $save.Background = $script:SWAccent; $save.Foreground = (ConvertTo-Brush '#10222A'); $save.FontWeight = 'SemiBold'; $save.BorderThickness = '0'
+    $save.Background = $script:SWAccent; $save.Foreground = $script:SWBrushes.AccentFg; $save.FontWeight = 'SemiBold'; $save.BorderThickness = '0'
     $save.add_Click({ Save-SettingsWindow })
     [void]$btns.Children.Add($cancel); [void]$btns.Children.Add($save)
     [void]$bottom.Children.Add($btns)
     [void]$root.Children.Add($bottom)
 
-    # Tabs — four top-level groups, each holding child tabs (nested TabControls). Children are added
-    # to the right group below; the groups themselves are added to $tabs after they're populated.
-    $tabs = New-Object System.Windows.Controls.TabControl
-    $tabs.Margin = '14,4,14,4'; $tabs.Background = [System.Windows.Media.Brushes]::Transparent; $tabs.BorderThickness = '0'
-    [void]$root.Children.Add($tabs)
-    $gTiming = New-SwParentTab 'Timing'        # Timers, Patterns
-    $gAppear = New-SwParentTab 'Appearance'    # Appearance, Colors, Text
-    $gBehavior = New-SwParentTab 'Behavior'    # Behavior, Hotkeys
-    # About is a single page, so it's a plain top-level tab (no child strip) — built as $tAbout below.
+    # Middle: a left navigation rail + a content host that swaps panes. (Glyphs are Segoe Fluent/MDL2
+    # code points; tune on-device if any render as a box.)
+    $mid = New-Object System.Windows.Controls.DockPanel; $mid.LastChildFill = $true
+    $railBorder = New-Object System.Windows.Controls.Border
+    $railBorder.Width = 184; $railBorder.Background = $script:SWBrushes.Rail
+    $railBorder.BorderBrush = $script:SWBrushes.Line; $railBorder.BorderThickness = '0,0,1,0'
+    [System.Windows.Controls.DockPanel]::SetDock($railBorder, 'Left')
+    $rail = New-Object System.Windows.Controls.StackPanel; $rail.Margin = '10,12,10,12'
+    $railBorder.Child = $rail
+    [void]$rail.Children.Add((New-SwNavItem 'timers' ([char]0xE823) 'Timers'))
+    [void]$rail.Children.Add((New-SwNavItem 'patterns' ([char]0xE8EE) 'Patterns'))
+    [void]$rail.Children.Add((New-SwNavItem 'appearance' ([char]0xE790) 'Appearance'))
+    [void]$rail.Children.Add((New-SwNavItem 'behavior' ([char]0xE713) 'Behavior'))
+    [void]$rail.Children.Add((New-SwNavItem 'text' ([char]0xE8D2) 'Text'))
+    [void]$rail.Children.Add((New-SwNavItem 'about' ([char]0xE946) 'About'))
+    $content = New-Object System.Windows.Controls.Border
+    $content.Background = $script:SWBrushes.Pane
+    $script:SWContent = $content
+    [void]$mid.Children.Add($railBorder)
+    [void]$mid.Children.Add($content)   # fill
+    [void]$root.Children.Add($mid)
 
     $a = $Settings.appearance
 
-    $tT = New-SwTab 'Timers'
-    $script:SWWork = New-SwText $Settings.timers.work;       [void]$tT.panel.Children.Add((New-SwField 'Work (hh:mm)' $script:SWWork))
-    $script:SWBreak = New-SwText $Settings.timers.break;     [void]$tT.panel.Children.Add((New-SwField 'Break (mm:ss)' $script:SWBreak))
-    $script:SWLong = New-SwText $Settings.timers.longBreak;  [void]$tT.panel.Children.Add((New-SwField 'Long break (mm:ss)' $script:SWLong))
-    $script:SWEvery = New-SwText ([string]$Settings.cycle.longBreakEvery) 60; [void]$tT.panel.Children.Add((New-SwField 'Long break every N (0 = off)' $script:SWEvery))
-    [void]$gTiming.tabs.Items.Add($tT.tab)
+    # --- Timers ---
+    $pTimers = New-SwPane 'Timers'
+    $cDur = New-SwCard 'Durations'
+    $script:SWWork = New-SwText $Settings.timers.work;      [void]$cDur.panel.Children.Add((New-SwField 'Work (hh:mm)' $script:SWWork))
+    $script:SWBreak = New-SwText $Settings.timers.break;    [void]$cDur.panel.Children.Add((New-SwField 'Break (mm:ss)' $script:SWBreak))
+    $script:SWLong = New-SwText $Settings.timers.longBreak; [void]$cDur.panel.Children.Add((New-SwField 'Long break (mm:ss)' $script:SWLong))
+    [void]$pTimers.cards.Children.Add($cDur.card)
+    $cCycle = New-SwCard 'Cycle'
+    $script:SWEvery = New-SwText ([string]$Settings.cycle.longBreakEvery) 60; [void]$cCycle.panel.Children.Add((New-SwField 'Long break every N (0 = off)' $script:SWEvery))
+    $script:SWAutoCont = New-SwCheck 'Auto-continue to next segment (off = wait for Resume)' ([bool]$Settings.cycle.autoContinue); [void]$cCycle.panel.Children.Add($script:SWAutoCont)
+    [void]$pTimers.cards.Children.Add($cCycle.card)
+    $script:SWPanes['timers'] = $pTimers.root
 
-    $tA = New-SwTab 'Appearance'
-    $so = New-SwSlider 0.1 1 ([double]$a.opacity) 'pct'; $script:SWOpacity = $so.slider; [void]$tA.panel.Children.Add((New-SwField 'Opacity' $so.row))
+    # --- Patterns ---
+    $pPat = New-SwPane 'Patterns'
+    $cPat = New-SwCard ''
+    $script:SWWorkPhases = New-SwPhaseEditor $cPat.panel 'Work pattern' (Get-WorkPattern $Settings)
+    $script:SWBreakPhases = New-SwPhaseEditor $cPat.panel 'Break pattern' (Get-BreakPattern $Settings)
+    [void]$pPat.cards.Children.Add($cPat.card)
+    $script:SWPanes['patterns'] = $pPat.root
+
+    # --- Appearance (theme toggle top-right + sticky live preview) ---
+    $themeToggle = New-SwSegToggle
+    $previewCard = New-SwOrbPreview
+    $pApp = New-SwPane 'Appearance' $themeToggle $previewCard
+    $cBubble = New-SwCard 'Bubble'
+    $so = New-SwSlider 0.1 1 ([double]$a.opacity) 'pct'; $script:SWOpacity = $so.slider; [void]$cBubble.panel.Children.Add((New-SwField 'Opacity' (New-SwFieldBox $so.row)))
     # Slider bounds widen to fit out-of-range stored values so opening + saving never silently
     # shrinks a hand-edited orb (core allows up to 2000/4000; the UI default range is 20-600).
     $dMin = [math]::Min(20, [math]::Min([double]$a.collapsedDiameterPx, [double]$a.expandedDiameterPx))
     $dMax = [math]::Max(600, [double]$a.expandedDiameterPx)
-    $sd = New-SwRangeSlider $dMin $dMax ([double]$a.collapsedDiameterPx) ([double]$a.expandedDiameterPx) 'px'; $script:SWDiameter = $sd.control; [void]$tA.panel.Children.Add((New-SwField 'Orb diameter (collapsed-expanded)' $sd.row))
-    $sb2 = New-SwSlider 5 100 ([double]$a.breakSizePctScreenHeight) 'pct100'; $script:SWBreakPct = $sb2.slider; [void]$tA.panel.Children.Add((New-SwField 'Break size (% screen height)' $sb2.row))
+    $sd = New-SwRangeSlider $dMin $dMax ([double]$a.collapsedDiameterPx) ([double]$a.expandedDiameterPx) 'px'; $script:SWDiameter = $sd.control; [void]$cBubble.panel.Children.Add((New-SwField 'Size (collapsed-expanded)' (New-SwFieldBox $sd.row)))
+    $sb2 = New-SwSlider 5 100 ([double]$a.breakSizePctScreenHeight) 'pct100'; $script:SWBreakPct = $sb2.slider; [void]$cBubble.panel.Children.Add((New-SwField 'Break size (screen)' (New-SwFieldBox $sb2.row)))
     # Orb position = its top-right corner, px from the screen's top-right (resizing keeps it fixed). Applies on Save.
-    $script:SWPosRight = New-SwText ([string]$Settings.position.fromRight) 60; [void]$tA.panel.Children.Add((New-SwField 'Distance from right (px)' $script:SWPosRight))
-    $script:SWPosTop = New-SwText ([string]$Settings.position.fromTop) 60; [void]$tA.panel.Children.Add((New-SwField 'Distance from top (px)' $script:SWPosTop))
-    $script:SWShowLabel = New-SwCheck 'Show phase label' ([bool]$a.showLabel); [void]$tA.panel.Children.Add($script:SWShowLabel)
-    $script:SWShowPhase = New-SwCheck 'Show phase countdown' ([bool]$a.showPhaseCountdown); [void]$tA.panel.Children.Add($script:SWShowPhase)
-    $script:SWShowPomo = New-SwCheck 'Show pomodoro time' ([bool]$a.showRemainingTimeUnderBubble); [void]$tA.panel.Children.Add($script:SWShowPomo)
-    $script:SWShowLong = New-SwCheck 'Show sessions until long break' ([bool]$a.showLongBreakCountdown); [void]$tA.panel.Children.Add($script:SWShowLong)
-    [void]$gAppear.tabs.Items.Add($tA.tab)
+    $script:SWPosRight = New-SwText ([string]$Settings.position.fromRight) 60; [void]$cBubble.panel.Children.Add((New-SwField 'Distance from right (px)' $script:SWPosRight))
+    $script:SWPosTop = New-SwText ([string]$Settings.position.fromTop) 60; [void]$cBubble.panel.Children.Add((New-SwField 'Distance from top (px)' $script:SWPosTop))
+    [void]$pApp.cards.Children.Add($cBubble.card)
 
-    $tF = New-SwTab 'Font'
-    $script:SWFontFamily = New-SwFontCombo $a.font.family; [void]$tF.panel.Children.Add((New-SwField 'Font family' $script:SWFontFamily))
-    $sf = New-SwSlider 8 72 ([double]$a.font.size) 'int'; $script:SWFontSize = $sf.slider; [void]$tF.panel.Children.Add((New-SwField 'Phase label size' $sf.row))
-    $sc = New-SwSlider 8 72 ([double]$a.font.countdownSize) 'int'; $script:SWCountdownSize = $sc.slider; [void]$tF.panel.Children.Add((New-SwField 'Phase countdown size' $sc.row))
-    $sp = New-SwSlider 8 72 ([double]$a.font.pomodoroSize) 'int'; $script:SWPomoSize = $sp.slider; [void]$tF.panel.Children.Add((New-SwField 'Pomodoro time size' $sp.row))
-    [void]$gAppear.tabs.Items.Add($tF.tab)
+    $cFont = New-SwCard 'Text & font'
+    $script:SWFontFamily = New-SwFontCombo $a.font.family; [void]$cFont.panel.Children.Add((New-SwField 'Font family' $script:SWFontFamily))
+    $sf = New-SwSlider 8 72 ([double]$a.font.size) 'int'; $script:SWFontSize = $sf.slider; [void]$cFont.panel.Children.Add((New-SwField 'Phase label size' (New-SwFieldBox $sf.row)))
+    $sc = New-SwSlider 8 72 ([double]$a.font.countdownSize) 'int'; $script:SWCountdownSize = $sc.slider; [void]$cFont.panel.Children.Add((New-SwField 'Phase countdown size' (New-SwFieldBox $sc.row)))
+    $sp = New-SwSlider 8 72 ([double]$a.font.pomodoroSize) 'int'; $script:SWPomoSize = $sp.slider; [void]$cFont.panel.Children.Add((New-SwField 'Pomodoro time size' (New-SwFieldBox $sp.row)))
+    $script:SWShowLabel = New-SwCheck 'Show phase label' ([bool]$a.showLabel); [void]$cFont.panel.Children.Add($script:SWShowLabel)
+    $script:SWShowPhase = New-SwCheck 'Show phase countdown' ([bool]$a.showPhaseCountdown); [void]$cFont.panel.Children.Add($script:SWShowPhase)
+    $script:SWShowPomo = New-SwCheck 'Show pomodoro time' ([bool]$a.showRemainingTimeUnderBubble); [void]$cFont.panel.Children.Add($script:SWShowPomo)
+    $script:SWShowLong = New-SwCheck 'Show sessions until long break' ([bool]$a.showLongBreakCountdown); [void]$cFont.panel.Children.Add($script:SWShowLong)
+    [void]$pApp.cards.Children.Add($cFont.card)
 
-    $tC = New-SwTab 'Colors'
-    $script:SWWorkFill = New-SwColorRow $tC.panel 'Work fill' $a.colors.workFill
-    $script:SWBreakFill = New-SwColorRow $tC.panel 'Break fill' $a.colors.breakFill
-    $script:SWTextColor = New-SwColorRow $tC.panel 'Text' $a.colors.text
-    [void]$gAppear.tabs.Items.Add($tC.tab)
+    $cCol = New-SwCard 'Colors'
+    $script:SWWorkFill = New-SwColorRow $cCol.panel 'Work fill' $a.colors.workFill
+    $script:SWBreakFill = New-SwColorRow $cCol.panel 'Break fill' $a.colors.breakFill
+    $script:SWTextColor = New-SwColorRow $cCol.panel 'Text' $a.colors.text
+    [void]$pApp.cards.Children.Add($cCol.card)
+    $script:SWPanes['appearance'] = $pApp.root
 
-    $tP = New-SwTab 'Patterns'
-    $script:SWWorkPhases = New-SwPhaseEditor $tP.panel 'Work pattern' (Get-WorkPattern $Settings)
-    $script:SWBreakPhases = New-SwPhaseEditor $tP.panel 'Break pattern' (Get-BreakPattern $Settings)
-    [void]$gTiming.tabs.Items.Add($tP.tab)
+    # --- Behavior (general + hotkeys) ---
+    $pBeh = New-SwPane 'Behavior'
+    $cGen = New-SwCard 'General'
+    $script:SWAuto = New-SwCheck 'Auto-start timer on launch' ([bool]$Settings.behavior.autoStartTimerOnLaunch); [void]$cGen.panel.Children.Add($script:SWAuto)
+    $script:SWBoot = New-SwCheck 'Start on boot' ([bool]$Settings.behavior.startOnBoot); [void]$cGen.panel.Children.Add($script:SWBoot)
+    $script:SWSingle = New-SwCheck 'Single instance' ([bool]$Settings.behavior.singleInstance); [void]$cGen.panel.Children.Add($script:SWSingle)
+    $script:SWSound = New-SwCheck 'Chime on transitions' ([bool]$Settings.sound.enabled); [void]$cGen.panel.Children.Add($script:SWSound)
+    [void]$pBeh.cards.Children.Add($cGen.card)
+    $cHk = New-SwCard 'Hotkeys (need a modifier, e.g. Ctrl+Alt+P)'
+    $script:SWHkStartStop = New-SwHotkeyRow $cHk.panel 'Start / Stop timer' $Settings.hotkeys.startStop
+    $script:SWHkPause = New-SwHotkeyRow $cHk.panel 'Pause / Resume' $Settings.hotkeys.pauseResume
+    $script:SWHkSkip = New-SwHotkeyRow $cHk.panel 'Skip' $Settings.hotkeys.skip
+    $script:SWHkSettings = New-SwHotkeyRow $cHk.panel 'Open settings' $Settings.hotkeys.settings
+    [void]$pBeh.cards.Children.Add($cHk.card)
+    $script:SWPanes['behavior'] = $pBeh.root
 
-    $tB = New-SwTab 'Behavior'
-    $script:SWAuto = New-SwCheck 'Auto-start timer on launch' ([bool]$Settings.behavior.autoStartTimerOnLaunch); [void]$tB.panel.Children.Add($script:SWAuto)
-    $script:SWAutoCont = New-SwCheck 'Auto-continue to next segment (off = wait for Resume)' ([bool]$Settings.cycle.autoContinue); [void]$tB.panel.Children.Add($script:SWAutoCont)
-    $script:SWBoot = New-SwCheck 'Start on boot' ([bool]$Settings.behavior.startOnBoot); [void]$tB.panel.Children.Add($script:SWBoot)
-    $script:SWSingle = New-SwCheck 'Single instance' ([bool]$Settings.behavior.singleInstance); [void]$tB.panel.Children.Add($script:SWSingle)
-    $script:SWSound = New-SwCheck 'Chime on transitions' ([bool]$Settings.sound.enabled); [void]$tB.panel.Children.Add($script:SWSound)
-    [void]$gBehavior.tabs.Items.Add($tB.tab)
-
-    $tH = New-SwTab 'Hotkeys'
-    $script:SWHkStartStop = New-SwHotkeyRow $tH.panel 'Start / Stop timer' $Settings.hotkeys.startStop
-    $script:SWHkPause = New-SwHotkeyRow $tH.panel 'Pause / Resume' $Settings.hotkeys.pauseResume
-    $script:SWHkSkip = New-SwHotkeyRow $tH.panel 'Skip' $Settings.hotkeys.skip
-    $script:SWHkSettings = New-SwHotkeyRow $tH.panel 'Open settings' $Settings.hotkeys.settings
-    [void]$gBehavior.tabs.Items.Add($tH.tab)
-
-    # Text tab — every user-facing label, saved to strings.json (separate from settings.json) so
-    # the wording can be translated independently. Previews live.
-    $tTx = New-SwTab 'Text'
+    # --- Text — every user-facing label, saved to strings.json (separate from settings.json) so the
+    # wording can be translated independently. Previews live. ---
+    $pTx = New-SwPane 'Text'
+    $cTx = New-SwCard 'Labels'
     $script:SWStrBoxes = @{}
     $strDefs = @(
         @{ g = 'tray'; k = 'startTimer'; label = 'Tray: Start timer' }
@@ -743,28 +959,29 @@ function New-SettingsWindow {
         $box = New-SwText ([string]$script:SWStrings[$def.g][$def.k]) 200
         $box.add_TextChanged({ Invoke-SwPreview })
         $script:SWStrBoxes["$($def.g).$($def.k)"] = $box
-        [void]$tTx.panel.Children.Add((New-SwField $def.label $box))
+        [void]$cTx.panel.Children.Add((New-SwField $def.label $box))
     }
-    [void]$gAppear.tabs.Items.Add($tTx.tab)
+    [void]$pTx.cards.Children.Add($cTx.card)
+    $script:SWPanes['text'] = $pTx.root
 
-    # About — app icon, version, license and the GitHub source. Plain top-level tab; static, no preview.
-    $tAbout = New-SwTab 'About'
+    # --- About — app icon, version, license and the GitHub source. Static, no preview. ---
+    $pAbout = New-SwPane 'About'
+    $cAbout = New-SwCard ''
     $infoIcon = New-Object System.Windows.Controls.Image
     $infoIcon.Width = 72; $infoIcon.Height = 72; $infoIcon.HorizontalAlignment = 'Center'; $infoIcon.Margin = '0,10,0,10'
     try { $infoIcon.Source = New-AppIconImage } catch { }
-    [void]$tAbout.panel.Children.Add($infoIcon)
+    [void]$cAbout.panel.Children.Add($infoIcon)
     $infoName = New-SwInfoText 'breathpause'
     $infoName.FontSize = 20; $infoName.FontWeight = 'SemiBold'; $infoName.HorizontalAlignment = 'Center'; $infoName.TextAlignment = 'Center'
-    [void]$tAbout.panel.Children.Add($infoName)
+    [void]$cAbout.panel.Children.Add($infoName)
     $infoVer = New-SwInfoText ('Version ' + (Get-AppVersion))
     $infoVer.Opacity = 0.6; $infoVer.FontSize = 12; $infoVer.HorizontalAlignment = 'Center'; $infoVer.TextAlignment = 'Center'; $infoVer.Margin = '0,2,0,16'
-    [void]$tAbout.panel.Children.Add($infoVer)
+    [void]$cAbout.panel.Children.Add($infoVer)
     $infoTag = New-SwInfoText 'An always-on-top breathing bubble that paces your focus sessions — native, zero dependencies, no Electron.'
     $infoTag.TextAlignment = 'Center'; $infoTag.Opacity = 0.8; $infoTag.FontSize = 12; $infoTag.Margin = '0,0,0,14'
-    [void]$tAbout.panel.Children.Add($infoTag)
-    [void]$tAbout.panel.Children.Add((New-SwField 'Made by' (New-SwInfoText 'Markus Wildgruber')))
-    [void]$tAbout.panel.Children.Add((New-SwField 'License' (New-SwInfoText 'MIT License — © 2026 Markus Wildgruber')))
-    # Clickable GitHub source (opens in the default browser).
+    [void]$cAbout.panel.Children.Add($infoTag)
+    [void]$cAbout.panel.Children.Add((New-SwField 'Made by' (New-SwInfoText 'Markus Wildgruber')))
+    [void]$cAbout.panel.Children.Add((New-SwField 'License' (New-SwInfoText 'MIT License — © 2026 Markus Wildgruber')))
     $linkBlock = New-Object System.Windows.Controls.TextBlock
     $linkBlock.VerticalAlignment = 'Center'
     $link = New-Object System.Windows.Documents.Hyperlink
@@ -773,11 +990,13 @@ function New-SettingsWindow {
     $link.add_RequestNavigate({ try { Start-Process $args[1].Uri.AbsoluteUri } catch { }; $args[1].Handled = $true })
     [void]$link.Inlines.Add('github.com/Markus-Wildgruber/breathpause')
     [void]$linkBlock.Inlines.Add($link)
-    [void]$tAbout.panel.Children.Add((New-SwField 'Source' $linkBlock))
+    [void]$cAbout.panel.Children.Add((New-SwField 'Source' $linkBlock))
+    [void]$pAbout.cards.Children.Add($cAbout.card)
+    $script:SWPanes['about'] = $pAbout.root
 
-    # Add the populated groups + the About page to the top-level tab strip, in order.
-    [void]$tabs.Items.Add($gTiming.tab); [void]$tabs.Items.Add($gAppear.tab)
-    [void]$tabs.Items.Add($gBehavior.tab); [void]$tabs.Items.Add($tAbout.tab)
+    # Reflect the resolved theme on the ☀/☾ toggle now that it exists, then open the first section.
+    Update-SwSeg $script:SWEffectiveTheme
+    Select-SwSection 'timers'
 
     # Wire live preview on every input change.
     $script:SWWork.add_TextChanged({ Invoke-SwPreview }); $script:SWBreak.add_TextChanged({ Invoke-SwPreview })
@@ -791,12 +1010,12 @@ function New-SettingsWindow {
     foreach ($cb in @($script:SWShowLabel, $script:SWShowPhase, $script:SWShowPomo, $script:SWShowLong, $script:SWAuto, $script:SWAutoCont, $script:SWBoot, $script:SWSingle, $script:SWSound)) {
         $cb.add_Click({ Invoke-SwPreview })
     }
+    Update-SwPreview   # seed the live orb preview from the initial values
 
     # No DWM acrylic here on purpose — see the $card comment above (keeps the corners truly round).
     # Revert the live preview if closed without saving.
     $win.add_Closing({ if (-not $script:SWSaved -and $script:SWOnCancel) { & $script:SWOnCancel } })
 
-    $script:SWWin = $win
     return $win
 }
 

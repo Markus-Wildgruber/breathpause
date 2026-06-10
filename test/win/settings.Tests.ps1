@@ -21,6 +21,7 @@ Describe 'Get-DefaultSettings' {
         $d.appearance.font.size | Should -Be 16
         $d.appearance.font.countdownSize | Should -Be 13
         $d.appearance.font.pomodoroSize | Should -Be 12
+        $d.appearance.theme | Should -Be 'system'
         $d.behavior.startOnBoot | Should -BeFalse
         $d.position.fromRight | Should -Be 16
         $d.position.fromTop | Should -Be 16
@@ -53,6 +54,13 @@ Describe 'Get-NormalizedSettings (added fields)' {
         $s.appearance.font.family | Should -Be 'Segoe UI Variable'
         $s.appearance.font.size | Should -Be 72
         $s.behavior.startOnBoot | Should -BeTrue
+    }
+
+    It 'keeps a valid theme and rejects an unknown one' {
+        (Get-NormalizedSettings @{ appearance = @{ theme = 'light' } }).appearance.theme | Should -Be 'light'
+        (Get-NormalizedSettings @{ appearance = @{ theme = 'dark' } }).appearance.theme | Should -Be 'dark'
+        (Get-NormalizedSettings @{ appearance = @{ theme = 'neon' } }).appearance.theme | Should -Be 'system'
+        (Get-NormalizedSettings @{}).appearance.theme | Should -Be 'system'
     }
 
     It 'exposes an app version distinct from the schema version' {
