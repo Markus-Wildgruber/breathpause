@@ -1,0 +1,9 @@
+{
+  "name": "Classic Orb",
+  "author": "breathpause",
+  "svg": "skin.svg",
+  "bindings": [
+    { "target": "orb", "property": "scale", "source": "breath", "from": 0.45, "to": 1.0, "origin": [100, 100] }
+  ],
+  "text": { "anchor": "center", "color": "#eef6ff" }
+}
