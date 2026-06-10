@@ -20,8 +20,16 @@ export async function loadSkin(baseUrl) {
 }
 
 // Mount into a container element; returns a handle with apply(sources) for the rAF loop.
-export function mountSkin(container, skin) {
-  container.innerHTML = skin.svgText;
+// opts.palette overrides/extends the manifest palette: a map of the SVG's original hex
+// colors to replacement colors, e.g. { "#d3d7cf": "#cfe4ff" } — how one piece of art
+// ships in many color schemes without duplicating geometry.
+export function mountSkin(container, skin, opts = {}) {
+  const palette = { ...(skin.manifest.palette || {}), ...(opts.palette || {}) };
+  let svgText = skin.svgText;
+  for (const [from, to] of Object.entries(palette)) {
+    svgText = svgText.replaceAll(new RegExp(escapeRegExp(from), 'gi'), to);
+  }
+  container.innerHTML = svgText;
   const svg = container.querySelector('svg');
   if (!svg) throw new Error(`skin ${skin.manifest.name}: skin.svg has no <svg> root`);
   svg.setAttribute('width', '100%');
@@ -69,6 +77,10 @@ function validateBinding(b) {
   if (!PROPERTIES.includes(b.property)) throw new Error(`binding ${b.target}: unknown property "${b.property}"`);
   if (!SOURCES.includes(b.source)) throw new Error(`binding ${b.target}: unknown source "${b.source}"`);
   if (typeof b.from !== 'number' || typeof b.to !== 'number') throw new Error(`binding ${b.target}: "from"/"to" must be numbers`);
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function fetchJson(url) {
