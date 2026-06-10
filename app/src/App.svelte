@@ -7,6 +7,7 @@
   import Pomodoro from './core/pomodoro.js';
   import Timefmt from './core/timefmt.js';
   import { loadSkin, mountSkin } from './lib/skin.js';
+  import { setupHoverDrag } from './lib/interactivity.js';
 
   // interim defaults until the settings module lands (fresh schema decided)
   const DEFAULTS = {
@@ -58,11 +59,7 @@
   onMount(async () => {
     if ('__TAURI_INTERNALS__' in window) {
       document.body.classList.add('tauri');
-      // whole bubble drags the window (left mouse press anywhere)
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      window.addEventListener('mousedown', (e) => {
-        if (e.button === 0) getCurrentWindow().startDragging();
-      });
+      setupHoverDrag();   // click-through; hover ~1.6s to grab & move
     }
 
     let pomo = Pomodoro.initState(DEFAULTS.work.minutes * 60, DEFAULTS.break.minutes * 60);
