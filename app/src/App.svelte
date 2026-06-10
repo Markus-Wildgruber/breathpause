@@ -8,21 +8,22 @@
   import Timefmt from './core/timefmt.js';
   import { loadSkin, mountSkin } from './lib/skin.js';
   import { setupHoverDrag } from './lib/interactivity.js';
+  import { loadSettings } from './lib/settings-store.js';
 
-  // interim defaults until the settings module lands (fresh schema decided)
-  const DEFAULTS = {
-    work: { minutes: 25, skin: 'orb', pattern: {
-      phases: [
-        { type: 'inhale', seconds: 5.5, label: 'breathe in' },
-        { type: 'exhale', seconds: 5.5, label: 'breathe out' },
-      ] } },
-    break: { minutes: 5, skin: 'sleepy-seal', pattern: {
-      phases: [
-        { type: 'inhale', seconds: 4, label: 'breathe in' },
-        { type: 'hold',   seconds: 4, label: 'hold' },
-        { type: 'exhale', seconds: 6, label: 'breathe out' },
-      ] } },
+  // breathing patterns per mode (pattern editor still on the roadmap)
+  const PATTERNS = {
+    work: { phases: [
+      { type: 'inhale', seconds: 5.5, label: 'breathe in' },
+      { type: 'exhale', seconds: 5.5, label: 'breathe out' },
+    ] },
+    break: { phases: [
+      { type: 'inhale', seconds: 4, label: 'breathe in' },
+      { type: 'hold',   seconds: 4, label: 'hold' },
+      { type: 'exhale', seconds: 6, label: 'breathe out' },
+    ] },
   };
+
+  let settings = $state(loadSettings());
 
   let stage;
   let label = $state('');
@@ -36,7 +37,7 @@
   let currentMode = null;
 
   async function skinFor(mode) {
-    const name = forced || DEFAULTS[mode].skin;
+    const name = forced || settings.skins[mode] || 'orb';
     if (!skins[name]) {
       try {
         skins[name] = await loadSkin(`skins/${name}`);
@@ -52,12 +53,18 @@
   async function showMode(mode) {
     currentMode = mode;
     const skin = await skinFor(mode);
-    textColor = skin.manifest.text?.color || '#eef6ff';
+    textColor = settings.appearance.textColor || skin.manifest.text?.color || '#eef6ff';
     mounted = mountSkin(stage, skin);
   }
 
+  function newPomo() {
+    const t = settings.timers;
+    return Pomodoro.initState(t.workSeconds, t.breakSeconds, t.longBreakSeconds,
+      t.longBreakEvery, t.autoContinue);
+  }
+
   onMount(async () => {
-    let pomo = Pomodoro.initState(DEFAULTS.work.minutes * 60, DEFAULTS.break.minutes * 60);
+    let pomo = newPomo();
     let paused = false;
 
     if ('__TAURI_INTERNALS__' in window) {
@@ -67,6 +74,11 @@
       listen('toggle-pause', () => {
         paused = !paused;
         pomo = paused ? Pomodoro.pause(pomo) : Pomodoro.resume(pomo);
+      });
+      listen('settings-changed', async () => {
+        settings = loadSettings();
+        pomo = newPomo();                  // durations changed -> restart the cycle
+        await showMode(pomo.mode);
       });
     }
     await showMode(pomo.mode);
@@ -86,20 +98,23 @@
         showMode(pomo.mode);
       }
 
-      const pattern = DEFAULTS[currentMode]?.pattern || DEFAULTS.work.pattern;
+      const pattern = PATTERNS[currentMode] || PATTERNS.work;
       if (!paused) breathT += dt;
       const breath = Breathing.sizeAt(pattern, breathT);
       mounted?.apply({ breath, time: Math.sin(breathT) });
-      label = paused ? 'paused' : Breathing.currentLabel(pattern, breathT);
-      pomoText = `${pomo.mode === 'work' ? 'work' : 'break'} ${Timefmt.formatRemaining(pomo.remaining)}`;
+      label = paused ? 'paused'
+        : settings.appearance.showPhaseLabel ? Breathing.currentLabel(pattern, breathT) : '';
+      pomoText = settings.appearance.showPomodoro
+        ? `${pomo.mode === 'work' ? 'work' : 'break'} ${Timefmt.formatRemaining(pomo.remaining)}`
+        : '';
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
   });
 </script>
 
-<main>
-  <div class="stage" bind:this={stage}></div>
+<main style:font-family={settings.appearance.font}>
+  <div class="stage" bind:this={stage} style:opacity={settings.appearance.opacity}></div>
   <div class="label" style:color={textColor}>{label}</div>
   <div class="pomo" style:color={textColor}>{pomoText}</div>
   {#if skinError}<div class="error">{skinError}</div>{/if}

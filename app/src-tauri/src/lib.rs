@@ -1,7 +1,7 @@
 use tauri::{
   menu::{Menu, MenuItem, PredefinedMenuItem},
   tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-  AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+  AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
 fn toggle_bubble(app: &AppHandle) {
@@ -22,7 +22,8 @@ fn open_settings(app: &AppHandle) {
   }
   let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
     .title("breathpause — settings")
-    .inner_size(440.0, 520.0)
+    .inner_size(720.0, 576.0)
+    .decorations(false)
     .build();
 }
 
@@ -73,6 +74,10 @@ pub fn run() {
           }
         })
         .build(app)?;
+
+      // settings window's Exit button
+      let handle = app.handle().clone();
+      app.listen_any("app-quit", move |_| handle.exit(0));
 
       Ok(())
     })

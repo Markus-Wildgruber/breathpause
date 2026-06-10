@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "bubble"
+    "bubble",
+    "settings"
   ],
   "permissions": [
     "core:default",
@@ -11,6 +12,7 @@
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-cursor-position",
     "core:window:allow-outer-position",
-    "core:window:allow-outer-size"
+    "core:window:allow-outer-size",
+    "core:window:allow-close"
   ]
 }
