@@ -1,7 +1,7 @@
 name: CI
 
-# Test both native targets on every push / PR. breathpause ships no dependencies, so there
-# is nothing to install beyond Node (macOS core) and Pester 5 (Windows core).
+# Tests + frontend build for the Tauri app on every push / PR.
+# (Windows exe + NSIS installer builds happen in the release workflow, TBD.)
 on:
   push:
   pull_request:
@@ -12,41 +12,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  macos:
-    name: macOS core + bundle
-    runs-on: macos-latest
+  app:
+    name: core tests + frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # Pure-logic core tests (node:test + coverage soft gate). Exits non-zero on any failure.
-      - name: Core tests
-        run: bash ./run-tests.sh
-      # Concatenate src/macos into dist/breathpause.js and node-syntax-check it.
-      - name: Build bundle
-        run: bash ./build/build-macos.sh
-
-  windows:
-    name: Windows core + bundle
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      # Run under pwsh: Windows PowerShell 5.1 ships Pester 3.4, but the suite needs Pester 5.
-      - name: Core tests (Pester 5)
-        shell: pwsh
-        run: |
-          Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck -Scope CurrentUser
-          $r = Invoke-Pester -Path test/win -Output Detailed -PassThru
-          if ($r.FailedCount -gt 0) { throw "$($r.FailedCount) Pester test(s) failed" }
-      # Concatenate src/win into dist/breathpause.ps1, then parser + static (undefined-command) check.
-      - name: Build bundle (parser + static check)
-        shell: pwsh
-        run: ./build/build-win.ps1
-      # Run the bundle's -Debug doctor under Windows PowerShell 5.1 (the app's real STA host).
-      # Best-effort: a headless runner has no interactive desktop, so DWM acrylic blur may not
-      # engage and some GUI checks can fail — the doctor reports them but does not gate the build.
-      - name: Doctor self-check (informational)
-        shell: powershell
-        continue-on-error: true
-        run: ./dist/breathpause.ps1 -Debug
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Core tests (node:test)
+        run: npm test
+      - name: Frontend build (vite)
+        run: npm run build
