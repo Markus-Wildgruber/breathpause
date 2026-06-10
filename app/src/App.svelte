@@ -57,12 +57,18 @@
   }
 
   onMount(async () => {
+    let pomo = Pomodoro.initState(DEFAULTS.work.minutes * 60, DEFAULTS.break.minutes * 60);
+    let paused = false;
+
     if ('__TAURI_INTERNALS__' in window) {
       document.body.classList.add('tauri');
       setupHoverDrag();   // click-through; hover ~1.6s to grab & move
+      const { listen } = await import('@tauri-apps/api/event');
+      listen('toggle-pause', () => {
+        paused = !paused;
+        pomo = paused ? Pomodoro.pause(pomo) : Pomodoro.resume(pomo);
+      });
     }
-
-    let pomo = Pomodoro.initState(DEFAULTS.work.minutes * 60, DEFAULTS.break.minutes * 60);
     await showMode(pomo.mode);
 
     const start = performance.now();
@@ -81,10 +87,10 @@
       }
 
       const pattern = DEFAULTS[currentMode]?.pattern || DEFAULTS.work.pattern;
-      breathT += dt;
+      if (!paused) breathT += dt;
       const breath = Breathing.sizeAt(pattern, breathT);
       mounted?.apply({ breath, time: Math.sin(breathT) });
-      label = Breathing.currentLabel(pattern, breathT);
+      label = paused ? 'paused' : Breathing.currentLabel(pattern, breathT);
       pomoText = `${pomo.mode === 'work' ? 'work' : 'break'} ${Timefmt.formatRemaining(pomo.remaining)}`;
       requestAnimationFrame(frame);
     }
