@@ -56,7 +56,14 @@
   }
 
   onMount(async () => {
-    if ('__TAURI_INTERNALS__' in window) document.body.classList.add('tauri');
+    if ('__TAURI_INTERNALS__' in window) {
+      document.body.classList.add('tauri');
+      // whole bubble drags the window (left mouse press anywhere)
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      window.addEventListener('mousedown', (e) => {
+        if (e.button === 0) getCurrentWindow().startDragging();
+      });
+    }
 
     let pomo = Pomodoro.initState(DEFAULTS.work.minutes * 60, DEFAULTS.break.minutes * 60);
     await showMode(pomo.mode);
@@ -88,7 +95,7 @@
   });
 </script>
 
-<main data-tauri-drag-region>
+<main>
   <div class="stage" bind:this={stage}></div>
   <div class="label" style:color={textColor}>{label}</div>
   <div class="pomo" style:color={textColor}>{pomoText}</div>
