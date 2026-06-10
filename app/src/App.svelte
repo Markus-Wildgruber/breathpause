@@ -17,7 +17,10 @@
   let textColor = $state('#eef6ff');
   let skinError = $state('');
 
+  const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
   onMount(async () => {
+    if (inTauri) document.body.classList.add('tauri');
     const wanted = new URLSearchParams(location.search).get('skin') || 'orb';
     let skin;
     try {
@@ -42,7 +45,7 @@
   });
 </script>
 
-<main>
+<main data-tauri-drag-region>
   <div class="stage" bind:this={stage}></div>
   <div class="label" style:color={textColor}>{label}</div>
   {#if skinError}<div class="error">{skinError}</div>{/if}
