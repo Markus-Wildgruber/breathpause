@@ -11,6 +11,15 @@
 // Broken skins must never break the app: loadSkin() throws with a clear message and the
 // caller falls back to the bundled orb skin (SPEC: skip + log + fall back).
 
+// Load a skin by ID: checks customSkins first, falls back to bundled skins folder.
+export async function loadSkinById(skinId, customSkins = []) {
+  const custom = (customSkins || []).find(cs => cs.id === skinId);
+  if (custom) {
+    return { manifest: { name: custom.name, bindings: [] }, svgText: custom.svgText, baseUrl: null };
+  }
+  return loadSkin(`skins/${skinId}`);
+}
+
 export async function loadSkin(baseUrl) {
   const manifest = await fetchJson(`${baseUrl}/skin.json`);
   if (!manifest.name) throw new Error(`skin at ${baseUrl}: missing "name"`);

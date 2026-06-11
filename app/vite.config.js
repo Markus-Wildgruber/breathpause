@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
         settings: resolve(import.meta.dirname, 'settings.html'),
+        pattern_editor: resolve(import.meta.dirname, 'pattern-editor.html'),
       },
     },
   },

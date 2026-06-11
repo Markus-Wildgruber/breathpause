@@ -5,7 +5,7 @@
 // the window turns interactive: cursor switches (body.hot) and a left-press anywhere
 // starts dragging the window. Leaving the bubble reverts to click-through.
 
-export async function setupHoverDrag({ dwellMs = 1600, leaveMs = 400, pollMs = 120 } = {}) {
+export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 120 } = {}) {
   if (!('__TAURI_INTERNALS__' in window)) return;   // browser dev: stay fully interactive
   const { getCurrentWindow, cursorPosition } = await import('@tauri-apps/api/window');
   const win = getCurrentWindow();
@@ -16,8 +16,19 @@ export async function setupHoverDrag({ dwellMs = 1600, leaveMs = 400, pollMs = 1
   let dwellStart = 0;
   let lastInside = 0;
 
+  // Detect double-click by timing: once startDragging() runs the OS owns the move-loop
+  // and the DOM 'dblclick' never fires, so we time consecutive mousedowns ourselves.
+  let lastDown = 0;
   window.addEventListener('mousedown', (e) => {
-    if (hot && e.button === 0) win.startDragging();
+    if (!hot || e.button !== 0) return;
+    const now = Date.now();
+    if (now - lastDown < 350) {
+      lastDown = 0;
+      import('@tauri-apps/api/event').then(({ emit }) => emit('open-settings'));
+      return;
+    }
+    lastDown = now;
+    win.startDragging();
   });
 
   setInterval(async () => {

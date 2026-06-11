@@ -5,5 +5,6 @@
   "bindings": [
     { "target": "orb", "property": "scale", "source": "breath", "from": 0.45, "to": 1.0, "origin": [100, 100] }
   ],
-  "text": { "anchor": "center", "color": "#eef6ff" }
+  "text": { "anchor": "center", "color": "#eef6ff" },
+  "themeColor": "#4a90c8"
 }

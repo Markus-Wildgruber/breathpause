@@ -4,7 +4,8 @@
   "description": "enables the default permissions",
   "windows": [
     "bubble",
-    "settings"
+    "settings",
+    "pattern-editor"
   ],
   "permissions": [
     "core:default",
@@ -13,6 +14,11 @@
     "core:window:allow-cursor-position",
     "core:window:allow-outer-position",
     "core:window:allow-outer-size",
-    "core:window:allow-close"
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-close",
+    "core:window:allow-center",
+    "core:window:allow-available-monitors",
+    "opener:allow-open-url"
   ]
 }

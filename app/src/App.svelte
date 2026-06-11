@@ -1,46 +1,67 @@
 <script>
-  // Bubble window: renders the per-mode skin and drives it with the breathing core,
-  // while the pomodoro core tracks work/break segments.
-  // ?skin=<name> forces one skin for all modes (preview); default is per-mode config.
   import { onMount } from 'svelte';
   import Breathing from './core/breathing.js';
   import Pomodoro from './core/pomodoro.js';
   import Timefmt from './core/timefmt.js';
-  import { loadSkin, mountSkin } from './lib/skin.js';
+  import { loadSkin, loadSkinById, mountSkin } from './lib/skin.js';
   import { setupHoverDrag } from './lib/interactivity.js';
-  import { loadSettings } from './lib/settings-store.js';
-
-  // breathing patterns per mode (pattern editor still on the roadmap)
-  const PATTERNS = {
-    work: { phases: [
-      { type: 'inhale', seconds: 5.5, label: 'breathe in' },
-      { type: 'exhale', seconds: 5.5, label: 'breathe out' },
-    ] },
-    break: { phases: [
-      { type: 'inhale', seconds: 4, label: 'breathe in' },
-      { type: 'hold',   seconds: 4, label: 'hold' },
-      { type: 'exhale', seconds: 6, label: 'breathe out' },
-    ] },
-  };
+  import { loadSettings, modeKey } from './lib/settings-store.js';
 
   let settings = $state(loadSettings());
 
   let stage;
   let label = $state('');
+  let phaseCountdown = $state('');
   let pomoText = $state('');
+  let sessionsText = $state('');
   let textColor = $state('#eef6ff');
   let skinError = $state('');
+  let ap = $state(settings.appearance.work);
 
   const forced = new URLSearchParams(location.search).get('skin');
-  const skins = {};            // mode -> loaded skin
+  const skins = {};
   let mounted = null;
   let currentMode = null;
 
+  // Convert settings pattern (in/out/hold) to Breathing.js pattern (inhale/exhale/hold)
+  function buildPattern(mode) {
+    const patternId = mode === 'work' ? settings.timers.workPattern : settings.timers.breakPattern;
+    const sp = (settings.patterns || []).find(p => p.id === patternId) || settings.patterns?.[0];
+    if (!sp) {
+      return { phases: [{ type: 'inhale', seconds: 5.5, label: 'breathe in' }, { type: 'exhale', seconds: 5.5, label: 'breathe out' }] };
+    }
+    const labels = settings.text?.phases || { in: 'breathe in', out: 'breathe out', hold: 'hold' };
+    return {
+      phases: sp.phases.map(ph => ({
+        type: ph.type === 'in' ? 'inhale' : ph.type === 'out' ? 'exhale' : 'hold',
+        seconds: ph.seconds,
+        label: labels[ph.type] || ph.type,
+      })),
+    };
+  }
+
+  function playChime() {
+    if (!settings.behavior?.chimeOnTransitions) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = 528;
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 1.5);
+    } catch {}
+  }
+
   async function skinFor(mode) {
-    const name = forced || settings.skins[mode] || 'orb';
+    const name = forced || settings.appearance[modeKey(mode)].skin || 'orb';
     if (!skins[name]) {
       try {
-        skins[name] = await loadSkin(`skins/${name}`);
+        skins[name] = await loadSkinById(name, settings.customSkins);
       } catch (e) {
         skinError = `${e.message} — falling back to orb`;
         console.warn('skin load failed:', e);
@@ -50,17 +71,32 @@
     return skins[name];
   }
 
+  async function resizeForMode() {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    const { getCurrentWindow, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window');
+    const win = getCurrentWindow();
+    const winW = ap.sizePx + 40;
+    const winH = ap.sizePx + 80;
+    const dpr = window.devicePixelRatio || 1;
+    const screenW = window.screen.availWidth / dpr;
+    const x = Math.max(0, screenW - winW - (ap.posRight ?? 40));
+    const y = Math.max(0, ap.posTop ?? 40);
+    await win.setSize(new LogicalSize(winW, winH));
+    await win.setPosition(new LogicalPosition(x, y));
+  }
+
   async function showMode(mode) {
     currentMode = mode;
+    ap = settings.appearance[modeKey(mode)];
     const skin = await skinFor(mode);
-    textColor = settings.appearance.textColor || skin.manifest.text?.color || '#eef6ff';
+    textColor = ap.textColor || skin.manifest.text?.color || '#eef6ff';
     mounted = mountSkin(stage, skin);
+    await resizeForMode();
   }
 
   function newPomo() {
     const t = settings.timers;
-    return Pomodoro.initState(t.workSeconds, t.breakSeconds, t.longBreakSeconds,
-      t.longBreakEvery, t.autoContinue);
+    return Pomodoro.initState(t.workSeconds, t.breakSeconds, t.longBreakSeconds, t.longBreakEvery, true);
   }
 
   onMount(async () => {
@@ -69,15 +105,17 @@
 
     if ('__TAURI_INTERNALS__' in window) {
       document.body.classList.add('tauri');
-      setupHoverDrag();   // click-through; hover ~1.6s to grab & move
+      setupHoverDrag();
       const { listen } = await import('@tauri-apps/api/event');
       listen('toggle-pause', () => {
         paused = !paused;
         pomo = paused ? Pomodoro.pause(pomo) : Pomodoro.resume(pomo);
       });
       listen('settings-changed', async () => {
+        // Invalidate skin cache so new skin picks are loaded
+        for (const k of Object.keys(skins)) delete skins[k];
         settings = loadSettings();
-        pomo = newPomo();                  // durations changed -> restart the cycle
+        pomo = newPomo();
         await showMode(pomo.mode);
       });
     }
@@ -92,31 +130,48 @@
       last = now;
 
       const r = Pomodoro.tick(pomo, dt);
+      if (r.events?.some(ev => ev === 'work_complete' || ev === 'break_complete')) playChime();
       pomo = r.state;
       if (pomo.mode !== currentMode) {
-        breathT = 0;                       // restart the breath cycle on mode switch
+        breathT = 0;
         showMode(pomo.mode);
       }
 
-      const pattern = PATTERNS[currentMode] || PATTERNS.work;
+      const pattern = buildPattern(currentMode);
       if (!paused) breathT += dt;
       const breath = Breathing.sizeAt(pattern, breathT);
       mounted?.apply({ breath, time: Math.sin(breathT) });
-      label = paused ? 'paused'
-        : settings.appearance.showPhaseLabel ? Breathing.currentLabel(pattern, breathT) : '';
-      pomoText = settings.appearance.showPomodoro
-        ? `${pomo.mode === 'work' ? 'work' : 'break'} ${Timefmt.formatRemaining(pomo.remaining)}`
-        : '';
+
+      if (paused) {
+        label = 'paused';
+        phaseCountdown = pomoText = sessionsText = '';
+      } else {
+        const info = Breathing.phaseAt(pattern, breathT);
+        label = ap.showPhaseLabel ? Breathing.currentLabel(pattern, breathT) : '';
+        if (ap.showPhaseCountdown && info) {
+          const remain = Math.ceil(info.remaining);
+          // Phases are seconds long: show the bare second, append it to the phase label.
+          phaseCountdown = remain < 60 ? String(remain) : Timefmt.formatRemaining(remain);
+        } else {
+          phaseCountdown = '';
+        }
+        pomoText = ap.showPomodoro ? Timefmt.formatRemaining(pomo.remaining) : '';
+        sessionsText = (ap.showSessions && pomo.longBreakEvery > 0)
+          ? `[${pomo.longBreakEvery - (pomo.workCount % pomo.longBreakEvery)}]` : '';
+      }
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
   });
 </script>
 
-<main style:font-family={settings.appearance.font}>
-  <div class="stage" bind:this={stage} style:opacity={settings.appearance.opacity}></div>
-  <div class="label" style:color={textColor}>{label}</div>
-  <div class="pomo" style:color={textColor}>{pomoText}</div>
+<main style:font-family={ap.font}>
+  <div class="stage" bind:this={stage}
+       style:width="{ap.sizePx}px" style:height="{ap.sizePx}px" style:opacity={ap.opacity}></div>
+  <div class="textblock" style:transform="translate({ap.textOffsetX ?? 0}px, {ap.textOffsetY ?? 0}px)">
+    <div class="label" style:color={textColor} style:font-size="{ap.labelSize}px">{[label, phaseCountdown].filter(Boolean).join(' ')}</div>
+    <div class="pomo" style:color={textColor}>{[pomoText, sessionsText].filter(Boolean).join('  ')}</div>
+  </div>
   {#if skinError}<div class="error">{skinError}</div>{/if}
 </main>
 
@@ -131,6 +186,11 @@
   .stage {
     width: min(76vmin, 560px);
     height: min(76vmin, 560px);
+  }
+  .textblock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .label {
     margin-top: 2px;
