@@ -50,6 +50,16 @@ Download the latest release from [GitHub Releases](https://github.com/Markus-Wil
 
 The installer and executable are unsigned (alpha), so Windows SmartScreen may show an "unknown publisher" prompt. Click **More info → Run anyway** to proceed.
 
+### macOS
+
+**Installer:** Open `breathpause_x.y.z_universal.dmg` and drag breathpause into Applications. Runs on both Apple Silicon and Intel.
+
+The app is unsigned (alpha), so Gatekeeper will refuse to open it on first launch. Either **right-click the app → Open**, then confirm in the dialog, or clear the quarantine flag from a terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/breathpause.app
+```
+
 ## Usage
 
 1. Launch breathpause — a translucent orb appears in the top-right corner and starts breathing.
