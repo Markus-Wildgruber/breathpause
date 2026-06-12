@@ -1,7 +1,7 @@
 name: CI
 
 # Tests + frontend build for the Tauri app on every push / PR.
-# (Windows exe + NSIS installer builds happen in the release workflow, TBD.)
+# (Installer builds for Windows + macOS happen in release.yml, triggered by v* tags.)
 on:
   push:
   pull_request:
