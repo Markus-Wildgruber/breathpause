@@ -47,26 +47,44 @@ jobs:
           $setup = Get-ChildItem app/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           Write-Host "Installing $($setup.Name)"
           Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
-          $exe = "$env:LOCALAPPDATA\breathpause\breathpause.exe"
-          if (!(Test-Path $exe)) { throw "installed exe not found at $exe" }
-          Write-Host "Installed OK: $exe"
+          Start-Sleep -Seconds 5
+          # The uninstall registry entry is the authoritative source for where the
+          # installer actually put things — no guessing at NSIS directory conventions.
+          $reg = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like 'breathpause*' } | Select-Object -First 1
+          if (!$reg) {
+            Write-Host "No uninstall entry. Top-level LOCALAPPDATA dirs for diagnosis:"
+            Get-ChildItem $env:LOCALAPPDATA -Directory | Select-Object -ExpandProperty Name
+            throw 'installer created no per-user uninstall registry entry'
+          }
+          Write-Host "DisplayName:     $($reg.DisplayName)"
+          Write-Host "InstallLocation: $($reg.InstallLocation)"
+          Write-Host "UninstallString: $($reg.UninstallString)"
+          $exe = Get-ChildItem -Path $reg.InstallLocation -Filter '*.exe' |
+            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (!$exe) { Get-ChildItem $reg.InstallLocation; throw "no app exe found in $($reg.InstallLocation)" }
+          Write-Host "Installed OK: $($exe.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_EXE=$($exe.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_DIR=$($reg.InstallLocation)"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_UNINSTALL=$($reg.UninstallString.Trim('`"'))"
 
       - name: Launch installed app and verify it stays up
         run: |
-          Start-Process "$env:LOCALAPPDATA\breathpause\breathpause.exe"
+          Start-Process $env:APP_EXE
           Start-Sleep -Seconds 15
-          $p = Get-Process breathpause -ErrorAction SilentlyContinue
+          $name = [System.IO.Path]::GetFileNameWithoutExtension($env:APP_EXE)
+          $p = Get-Process $name -ErrorAction SilentlyContinue
           if (!$p) { throw "app exited within 15s of launch" }
           Write-Host "App running (pid $($p.Id))"
-          Stop-Process -Name breathpause -Force
+          Stop-Process -Name $name -Force
 
       - name: Uninstall silently
         run: |
-          Start-Process "$env:LOCALAPPDATA\breathpause\uninstall.exe" -ArgumentList '/S' -Wait
+          Start-Process $env:APP_UNINSTALL -ArgumentList '/S' -Wait
           # The NSIS uninstaller respawns from %TEMP% and returns early — give it time.
           $deadline = (Get-Date).AddSeconds(60)
-          while ((Test-Path "$env:LOCALAPPDATA\breathpause\breathpause.exe") -and (Get-Date) -lt $deadline) {
+          while ((Test-Path $env:APP_EXE) -and (Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 3
           }
-          if (Test-Path "$env:LOCALAPPDATA\breathpause\breathpause.exe") { throw "exe still present after uninstall" }
+          if (Test-Path $env:APP_EXE) { throw "exe still present after uninstall" }
           Write-Host "Uninstalled OK"
