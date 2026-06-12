@@ -47,7 +47,9 @@ jobs:
           $setup = Get-ChildItem app/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           Write-Host "Installing $($setup.Name)"
           $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
-          Write-Host "installer exit code: $($proc.ExitCode)"
+          # ::notice/::error annotations are readable via the public checks API,
+          # so failures can be diagnosed without log access.
+          Write-Host "::notice::installer=$($setup.Name) exitCode=$($proc.ExitCode)"
           Start-Sleep -Seconds 5
           # The uninstall registry entry is the authoritative source for where the
           # installer actually put things — no guessing at NSIS directory conventions.
@@ -58,22 +60,24 @@ jobs:
             ForEach-Object { Get-ItemProperty $_.PSPath } |
             Where-Object { "$($_.DisplayName)" -like '*breathpause*' } | Select-Object -First 1
           if (!$reg) {
-            Write-Host '--- HKCU uninstall entries ---'
-            (Get-ChildItem $hives[0] -ErrorAction SilentlyContinue).PSChildName
-            Write-Host '--- breathpause*.exe found under LOCALAPPDATA / Program Files ---'
-            Get-ChildItem $env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)} -Recurse -Filter 'breathpause*.exe' -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty FullName -First 10
-            throw 'breathpause uninstall registry entry not found'
+            $entries = ($hives | ForEach-Object { Get-ChildItem $_ -ErrorAction SilentlyContinue } |
+              ForEach-Object { (Get-ItemProperty $_.PSPath).DisplayName } | Where-Object { $_ } |
+              Select-Object -First 30) -join '; '
+            $found = (Get-ChildItem $env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)} -Recurse -Filter 'breathpause*.exe' -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName -First 5) -join '; '
+            Write-Host "::error::no uninstall entry. exitCode=$($proc.ExitCode) exeSearch=[$found] uninstallEntries=[$entries]"
+            exit 1
           }
-          Write-Host "DisplayName:     $($reg.DisplayName)"
-          Write-Host "InstallLocation: $($reg.InstallLocation)"
-          Write-Host "UninstallString: $($reg.UninstallString)"
+          Write-Host "::notice::DisplayName=$($reg.DisplayName) InstallLocation=$($reg.InstallLocation) UninstallString=$($reg.UninstallString)"
           $uninst = ($reg.UninstallString -replace '"','').Trim()
           $dir = $reg.InstallLocation
           if (!$dir) { $dir = Split-Path $uninst }
           $exe = Get-ChildItem -Path $dir -Filter '*.exe' |
             Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
-          if (!$exe) { Get-ChildItem $dir; throw "no app exe found in $dir" }
+          if (!$exe) {
+            Write-Host "::error::no app exe in $dir — contents: [$((Get-ChildItem $dir -ErrorAction SilentlyContinue).Name -join '; ')]"
+            exit 1
+          }
           Write-Host "Installed OK: $($exe.FullName)"
           Add-Content -Path $env:GITHUB_ENV -Value "APP_EXE=$($exe.FullName)"
           Add-Content -Path $env:GITHUB_ENV -Value "APP_DIR=$dir"
