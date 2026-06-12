@@ -1,9 +1,11 @@
 name: Installer smoke test
 
-# Builds the NSIS installer on a real Windows runner, installs it silently,
+# Windows: builds the NSIS installer on a real runner, installs it silently,
 # launches the installed app, then uninstalls — catching packaging problems
 # (missing WebView2 bootstrap, wrong install dir, broken uninstall) that the
 # cross-compiled standalone exe can't show.
+# macOS: builds the universal .app + .dmg like the release does, verifies both
+# architectures are present, launches the app, and mount-checks the dmg.
 # Runs on manual dispatch, or automatically when this file changes.
 on:
   workflow_dispatch:
@@ -104,3 +106,57 @@ jobs:
           }
           if (Test-Path $env:APP_EXE) { throw "exe still present after uninstall" }
           Write-Host "Uninstalled OK"
+
+  smoke-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build universal app + dmg (same as release)
+        working-directory: app
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Verify the binary is universal
+        run: |
+          BIN="app/src-tauri/target/universal-apple-darwin/release/bundle/macos/breathpause.app/Contents/MacOS/breathpause"
+          test -x "$BIN"
+          echo "archs: $(lipo -archs "$BIN")"
+          lipo -archs "$BIN" | grep -q x86_64
+          lipo -archs "$BIN" | grep -q arm64
+
+      - name: Launch app and verify it stays up
+        run: |
+          "app/src-tauri/target/universal-apple-darwin/release/bundle/macos/breathpause.app/Contents/MacOS/breathpause" &
+          APP_PID=$!
+          sleep 15
+          kill -0 $APP_PID    # fails if the app crashed/exited
+          echo "app running (pid $APP_PID)"
+          kill $APP_PID
+
+      - name: Mount dmg and check contents
+        run: |
+          DMG=$(ls app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          echo "dmg: $DMG"
+          hdiutil attach "$DMG" -nobrowse -mountpoint /tmp/bp-dmg
+          test -d /tmp/bp-dmg/breathpause.app
+          hdiutil detach /tmp/bp-dmg
