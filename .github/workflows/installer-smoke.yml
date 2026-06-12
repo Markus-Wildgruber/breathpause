@@ -94,7 +94,22 @@ jobs:
           $p = Get-Process $name -ErrorAction SilentlyContinue
           if (!$p) { throw "app exited within 15s of launch" }
           Write-Host "App running (pid $($p.Id))"
+          # Screenshot the desktop with the bubble visible (uploaded as artifact).
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bmp = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $bmp.Size)
+          $bmp.Save("$env:GITHUB_WORKSPACE\windows-desktop.png")
+          Write-Host "screenshot saved"
           Stop-Process -Name $name -Force
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshot
+          path: windows-desktop.png
+          if-no-files-found: ignore
 
       - name: Uninstall silently
         run: |
@@ -155,7 +170,16 @@ jobs:
           sleep 15
           kill -0 $APP_PID    # fails if the app crashed/exited
           echo "app running (pid $APP_PID)"
+          # Screenshot the desktop with the bubble visible (uploaded as artifact).
+          screencapture -x macos-desktop.png || echo "screencapture failed (TCC?)"
           kill $APP_PID
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-screenshot
+          path: macos-desktop.png
+          if-no-files-found: ignore
 
       - name: Mount dmg and check contents
         run: |
