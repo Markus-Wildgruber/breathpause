@@ -74,7 +74,13 @@ fn open_settings(app: &AppHandle) {
 
 fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
   let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/favicon.ico"))?;
-  WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+  // `--pane <id>` (CI smoke tests / deep links) opens settings on a specific pane.
+  let args: Vec<String> = std::env::args().collect();
+  let url = match args.iter().position(|a| a == "--pane").and_then(|i| args.get(i + 1)) {
+    Some(p) => format!("settings.html?pane={p}"),
+    None => "settings.html".into(),
+  };
+  WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(url.into()))
     .title("BreathPause")
     .inner_size(760.0, 640.0)
     .decorations(true)
@@ -84,6 +90,12 @@ fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     .icon(icon)?
     .build()?;
   Ok(())
+}
+
+// The process arguments, for frontend launch hooks (--settings, --apply-settings).
+#[tauri::command]
+fn launch_args() -> Vec<String> {
+  std::env::args().collect()
 }
 
 // Screenshot of the monitor containing the (physical, global) point — downscaled and
@@ -141,7 +153,7 @@ fn open_pattern_editor(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![capture_monitor])
+    .invoke_handler(tauri::generate_handler![capture_monitor, launch_args])
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_autostart::init(
@@ -149,11 +161,14 @@ pub fn run() {
       None,
     ))
     // Single instance: a second launch focuses the running bubble and exits.
-    .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
       if let Some(win) = app.get_webview_window("bubble") {
         let _ = win.show();
         let _ = win.set_focus();
         let _ = app.emit_to("bubble", "visibility-changed", true);
+      }
+      if args.iter().any(|a| a == "--settings") {
+        open_settings(app);
       }
     }))
     .setup(|app| {

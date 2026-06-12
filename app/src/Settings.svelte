@@ -31,7 +31,13 @@
       getVersion().then((v) => (version = v)),
     );
   }
-  let pane = $state("appearance");
+  // ?pane=<id> (from the --pane launch arg / deep links) picks the initial pane.
+  const paneParam = new URLSearchParams(location.search).get("pane");
+  let pane = $state(
+    ["appearance", "patterns", "timers", "skins", "behavior", "about"].includes(paneParam)
+      ? paneParam
+      : "appearance",
+  );
   let mode = $state("work");
   let ap = $derived(s.appearance[mode]);
 

@@ -6,7 +6,7 @@
   import Pattern from './core/pattern.js';
   import { loadSkin, loadSkinById, mountSkin } from './lib/skin.js';
   import { setupHoverDrag, setHoverDragActive } from './lib/interactivity.js';
-  import { loadSettings, saveSettings, modeKey } from './lib/settings-store.js';
+  import { loadSettings, saveSettings, mergePatch, modeKey } from './lib/settings-store.js';
 
   let settings = $state(loadSettings());
 
@@ -225,6 +225,22 @@
         }
       }
       await applyHotkeys();
+
+      // CLI/e2e hooks: --apply-settings '<json>' merges a patch into the saved
+      // settings before first paint; --settings opens the settings window.
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const argv = await invoke('launch_args');
+        const ai = argv.indexOf('--apply-settings');
+        if (ai >= 0 && argv[ai + 1]) {
+          saveSettings(mergePatch(loadSettings(), JSON.parse(argv[ai + 1])));
+          settings = loadSettings();
+          pomo = Pomodoro.applyConfig(pomo, settings.timers);
+        }
+        if (argv.includes('--settings')) emit('open-settings');
+      } catch (e) {
+        console.warn('launch args:', e);
+      }
 
       // Start-on-boot: mirror the checkbox into the OS autostart entry.
       const { enable, disable, isEnabled } = await import('@tauri-apps/plugin-autostart');

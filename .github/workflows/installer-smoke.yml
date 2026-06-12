@@ -88,13 +88,6 @@ jobs:
 
       - name: Launch installed app and verify it stays up
         run: |
-          Start-Process $env:APP_EXE
-          Start-Sleep -Seconds 15
-          $name = [System.IO.Path]::GetFileNameWithoutExtension($env:APP_EXE)
-          $p = Get-Process $name -ErrorAction SilentlyContinue
-          if (!$p) { throw "app exited within 15s of launch" }
-          Write-Host "App running (pid $($p.Id))"
-          # Desktop screenshots while the app is alive (uploaded as artifacts).
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
           function Shot($file) {
             $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -105,22 +98,32 @@ jobs:
             $g.Dispose(); $bmp.Dispose()
             Write-Host "shot: $file.png"
           }
+          $name = [System.IO.Path]::GetFileNameWithoutExtension($env:APP_EXE)
+
+          Start-Process $env:APP_EXE
+          Start-Sleep -Seconds 15
+          $p = Get-Process $name -ErrorAction SilentlyContinue
+          if (!$p) { throw "app exited within 15s of launch" }
+          Write-Host "App running (pid $($p.Id))"
           Shot 'win-1-bubble'
-          # Open settings via the app's own global hotkey (synthetic input triggers
-          # OS-registered hotkeys), then tour the panes: the nav items are
-          # keyboard-accessible, so Tab advances and Enter selects.
+          # The app's own global hotkey opens settings — synthetic input triggers
+          # OS-registered hotkeys, so this verifies registration on a clean machine.
           [System.Windows.Forms.SendKeys]::SendWait('^%+o')
           Start-Sleep -Seconds 6
-          Shot 'win-2-settings-appearance'
-          [System.Windows.Forms.SendKeys]::SendWait('{TAB}')   # focus first nav item
+          Shot 'win-2-settings-via-hotkey'
+          Stop-Process -Name $name -Force
+          Start-Sleep -Seconds 2
+
+          # Tour every settings pane deterministically via launch args.
           $i = 3
-          foreach ($pane in @('patterns','timers','skins','behavior','about')) {
-            [System.Windows.Forms.SendKeys]::SendWait('{TAB}{ENTER}')
+          foreach ($pane in @('appearance','patterns','timers','skins','behavior','about')) {
+            Start-Process $env:APP_EXE -ArgumentList '--settings','--pane',$pane
+            Start-Sleep -Seconds 8
+            Shot "win-$i-pane-$pane"
+            Stop-Process -Name $name -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 2
-            Shot "win-$i-settings-$pane"
             $i++
           }
-          Stop-Process -Name $name -Force
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
@@ -183,20 +186,45 @@ jobs:
 
       - name: Launch app and verify it stays up
         run: |
-          "$APP_BIN" &
-          APP_PID=$!
-          sleep 15
-          kill -0 $APP_PID    # fails if the app crashed/exited
-          echo "app running (pid $APP_PID)"
-          # Screenshot the desktop with the bubble visible (uploaded as artifact).
-          screencapture -x macos-desktop.png || echo "screencapture failed (TCC?)"
-          kill $APP_PID
+          shot() { screencapture -x "$1.png" && echo "shot: $1.png"; }
+          run_app() {  # run_app <seconds> [args...]
+            local secs=$1; shift
+            "$APP_BIN" "$@" & APP_PID=$!
+            sleep "$secs"
+            kill -0 $APP_PID    # fails if the app crashed/exited
+          }
+          stop_app() { kill $APP_PID; sleep 2; }
 
-      - name: Upload screenshot
+          run_app 15
+          echo "app running (pid $APP_PID)"
+          shot mac-1-bubble-default
+          stop_app
+
+          # Change settings via the --apply-settings hook: the bubble should show
+          # the bear skin immediately...
+          run_app 10 --apply-settings '{"appearance":{"work":{"skin":"cute-bear","sizePx":300}}}'
+          shot mac-2-bubble-bear-applied
+          stop_app
+
+          # ...and still show it on a plain relaunch (persistence).
+          run_app 10
+          shot mac-3-bubble-bear-persisted
+          stop_app
+
+          # Tour every settings pane via launch args.
+          i=4
+          for pane in appearance patterns timers skins behavior about; do
+            run_app 10 --settings --pane "$pane"
+            shot "mac-$i-pane-$pane"
+            stop_app
+            i=$((i+1))
+          done
+
+      - name: Upload screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: macos-screenshot
-          path: macos-desktop.png
+          name: macos-screenshots
+          path: mac-*.png
           if-no-files-found: ignore
 
       - name: Mount dmg and check contents

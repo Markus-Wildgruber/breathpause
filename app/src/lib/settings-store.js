@@ -117,6 +117,19 @@ export function newSkinId() {
   return 'custom-' + rand;
 }
 
+// Deep-merge a partial settings patch in place: objects merge, everything else
+// (numbers, strings, arrays) replaces. Used by the --apply-settings launch hook.
+export function mergePatch(base, patch) {
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object') {
+      mergePatch(base[k], v);
+    } else {
+      base[k] = v;
+    }
+  }
+  return base;
+}
+
 export function loadSettings() {
   const base = structuredClone(DEFAULT_SETTINGS);
   try {
