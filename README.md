@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="img/breathpause-256.png" alt="breathpause logo" width="110">
+<img src="app/public/img/breathpause-256.png" alt="breathpause logo" width="110">
 
 # breathpause
 
@@ -36,7 +36,7 @@ Built with **Tauri v2 + Svelte**: a small Rust backend hosts a WebView2 frontend
 | Platform | Status | Notes |
 |---|---|---|
 | **Windows** 10 / 11 | Working — alpha | Requires WebView2 (pre-installed on Windows 11; auto-bootstrapped on Windows 10 by the installer). |
-| **macOS** | Planned | Tauri supports macOS; not yet packaged or tested. |
+| **macOS** | Built, untested | Universal (Apple Silicon + Intel) `.dmg` built by the release workflow; unsigned, not yet tested on real hardware. |
 
 ## Install
 

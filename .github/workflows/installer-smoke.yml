@@ -1,0 +1,72 @@
+name: Installer smoke test
+
+# Builds the NSIS installer on a real Windows runner, installs it silently,
+# launches the installed app, then uninstalls — catching packaging problems
+# (missing WebView2 bootstrap, wrong install dir, broken uninstall) that the
+# cross-compiled standalone exe can't show.
+# Runs on manual dispatch, or automatically when this file changes.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/installer-smoke.yml'
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build NSIS installer
+        working-directory: app
+        run: npx tauri build --bundles nsis
+
+      - name: Install silently
+        run: |
+          $setup = Get-ChildItem app/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Write-Host "Installing $($setup.Name)"
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $exe = "$env:LOCALAPPDATA\breathpause\breathpause.exe"
+          if (!(Test-Path $exe)) { throw "installed exe not found at $exe" }
+          Write-Host "Installed OK: $exe"
+
+      - name: Launch installed app and verify it stays up
+        run: |
+          Start-Process "$env:LOCALAPPDATA\breathpause\breathpause.exe"
+          Start-Sleep -Seconds 15
+          $p = Get-Process breathpause -ErrorAction SilentlyContinue
+          if (!$p) { throw "app exited within 15s of launch" }
+          Write-Host "App running (pid $($p.Id))"
+          Stop-Process -Name breathpause -Force
+
+      - name: Uninstall silently
+        run: |
+          Start-Process "$env:LOCALAPPDATA\breathpause\uninstall.exe" -ArgumentList '/S' -Wait
+          # The NSIS uninstaller respawns from %TEMP% and returns early — give it time.
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path "$env:LOCALAPPDATA\breathpause\breathpause.exe") -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 3
+          }
+          if (Test-Path "$env:LOCALAPPDATA\breathpause\breathpause.exe") { throw "exe still present after uninstall" }
+          Write-Host "Uninstalled OK"
