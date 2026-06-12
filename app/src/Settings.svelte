@@ -34,6 +34,30 @@
   let pane = $state("appearance");
   let mode = $state("work");
   let ap = $derived(s.appearance[mode]);
+
+  const HOTKEY_ROWS = [
+    { id: "startStop", label: "Start / Stop timer" },
+    { id: "pauseResume", label: "Pause / Resume" },
+    { id: "skip", label: "Skip" },
+    { id: "settings", label: "Open settings" },
+    { id: "hide", label: "Hide / show bubble" },
+  ];
+
+  // Fill a hotkey field from an actual keypress — no free text, nothing to mistype.
+  // Stored in the plugin's accelerator format ("Ctrl+Alt+Shift+P").
+  function recordHotkey(e, id) {
+    if (e.key === "Tab") return; // keep keyboard navigation working
+    e.preventDefault();
+    if (/^(Control|Alt|Shift|Meta)/.test(e.code)) return; // modifier alone: keep waiting
+    if (!e.ctrlKey && !e.altKey && !e.metaKey) return; // require a real modifier
+    const mods = [];
+    if (e.ctrlKey) mods.push("Ctrl");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+    if (e.metaKey) mods.push("Super");
+    const key = e.code.replace(/^Key/, "").replace(/^Digit/, "");
+    s.hotkeys[id] = [...mods, key].join("+");
+  }
   let apSub = $state("skin");
 
   // Searchable font picker
@@ -498,7 +522,6 @@
     <!-- ===== TIMERS ===== -->
     {#if pane === "timers"}
       <div class="pane">
-        <div class="panehead">{@render themeBtn()}</div>
         <div class="card timers">
           <div class="row">
             <label>Work (hh:mm)</label>
@@ -540,7 +563,6 @@
               min={0}
               max={12}
               step={1}
-              width={56}
             />
           </div>
         </div>
@@ -549,8 +571,6 @@
       <!-- ===== PATTERNS ===== -->
     {:else if pane === "patterns"}
       <div class="pane">
-        <div class="panehead">{@render themeBtn()}</div>
-
         <div class="gallery">
           {#each s.patterns as p (p.id)}
             <div class="gitem pat-gitem">
@@ -630,8 +650,6 @@
       <!-- ===== SKINS ===== -->
     {:else if pane === "skins"}
       <div class="pane">
-        <div class="panehead">{@render themeBtn()}</div>
-
         <div class="gallery skin-gallery">
           {#each allSkins as sk (sk.id)}
             <div class="gitem skin-gitem">
@@ -713,15 +731,16 @@
       <!-- ===== APPEARANCE ===== -->
     {:else if pane === "appearance"}
       <div class="pane">
-        <div class="panehead">{@render themeBtn()}</div>
-
-        <div class="modeseg">
-          <button class:on={mode === "work"} onclick={() => (mode = "work")}
-            >Work</button
-          >
-          <button class:on={mode === "break"} onclick={() => (mode = "break")}
-            >Break</button
-          >
+        <div class="panehead">
+          <div class="modeseg">
+            <button class:on={mode === "work"} onclick={() => (mode = "work")}
+              >Work</button
+            >
+            <button class:on={mode === "break"} onclick={() => (mode = "break")}
+              >Break</button
+            >
+          </div>
+          {@render themeBtn()}
         </div>
 
         <div class="card preview">
@@ -1035,7 +1054,6 @@
       <!-- ===== BEHAVIOR ===== -->
     {:else if pane === "behavior"}
       <div class="pane">
-        <div class="panehead">{@render themeBtn()}</div>
         <div class="card">
           <div class="ch">General</div>
           <label class="chk"
@@ -1053,52 +1071,39 @@
         </div>
         <div class="card">
           <div class="ch">Hotkeys</div>
-          <div class="hint" style:margin-bottom="10px">
-            Requires a modifier key (e.g. Ctrl+Alt+S). Leave blank to disable.
-          </div>
-          <div class="row">
-            <label for="hkss">Start / Stop timer</label>
-            <input
-              id="hkss"
-              class="ctl"
-              bind:value={s.hotkeys.startStop}
-              placeholder="e.g. Ctrl+Alt+S"
-            />
-          </div>
-          <div class="row">
-            <label for="hkpr">Pause / Resume</label>
-            <input
-              id="hkpr"
-              class="ctl"
-              bind:value={s.hotkeys.pauseResume}
-              placeholder="e.g. Ctrl+Alt+P"
-            />
-          </div>
-          <div class="row">
-            <label for="hksk">Skip</label>
-            <input
-              id="hksk"
-              class="ctl"
-              bind:value={s.hotkeys.skip}
-              placeholder="e.g. Ctrl+Alt+N"
-            />
-          </div>
-          <div class="row">
-            <label for="hkset">Open settings</label>
-            <input
-              id="hkset"
-              class="ctl"
-              bind:value={s.hotkeys.settings}
-              placeholder="e.g. Ctrl+Alt+,"
-            />
-          </div>
+          {#each HOTKEY_ROWS as h (h.id)}
+            <div class="row">
+              <label for={"hk-" + h.id}>{h.label}</label>
+              <div class="hk">
+                <input
+                  id={"hk-" + h.id}
+                  class="ctl hk-input"
+                  readonly
+                  placeholder="press keys…"
+                  value={s.hotkeys[h.id] || ""}
+                  onkeydown={(e) => recordHotkey(e, h.id)}
+                />
+                <button
+                  class="hk-btn"
+                  title="Clear (disable)"
+                  aria-label="Clear hotkey"
+                  onclick={() => (s.hotkeys[h.id] = null)}>✕</button
+                >
+                <button
+                  class="hk-btn"
+                  title="Reset to default"
+                  aria-label="Reset hotkey to default"
+                  onclick={() => (s.hotkeys[h.id] = DEFAULT_SETTINGS.hotkeys[h.id])}>↺</button
+                >
+              </div>
+            </div>
+          {/each}
         </div>
       </div>
 
       <!-- ===== ABOUT ===== -->
     {:else if pane === "about"}
       <div class="pane">
-        <div class="panehead">{@render themeBtn()}</div>
         <div class="card">
           <div class="about-center">
             <img
@@ -1109,59 +1114,9 @@
             <div class="about-name">BreathPause</div>
             <div class="about-ver">Version {version}</div>
             <div class="about-tag">
-              An always-on-top breathing bubble for Windows. Sits in the corner
-              and breathes quietly while you work, then guides you through a
+              An always-on-top breathing bubble. Sits in the corner and
+              breathes quietly while you work, then guides you through a
               breathing break when the pomodoro timer runs out.
-            </div>
-            <div class="about-social">
-              <button
-                class="social-btn"
-                title="GitHub"
-                aria-label="GitHub"
-                onclick={() =>
-                  openExternal(
-                    "https://github.com/Markus-Wildgruber/breathpause",
-                  )}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="22"
-                  height="22"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.04-.02-2.05-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22 0 1.6-.01 2.9-.01 3.29 0 .32.22.7.83.58A12 12 0 0 0 24 12.5C24 5.87 18.63.5 12 .5z"
-                  />
-                </svg>
-              </button>
-              <button
-                class="social-btn"
-                title="Instagram"
-                aria-label="Instagram"
-                onclick={() =>
-                  openExternal("https://www.instagram.com/breathe.nice/")}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="22"
-                  height="22"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  aria-hidden="true"
-                >
-                  <rect x="2" y="2" width="20" height="20" rx="5.5" />
-                  <circle cx="12" cy="12" r="4.2" />
-                  <circle
-                    cx="17.6"
-                    cy="6.4"
-                    r="1.2"
-                    fill="currentColor"
-                    stroke="none"
-                  />
-                </svg>
-              </button>
             </div>
           </div>
           <div class="ch">Info</div>
@@ -1177,18 +1132,82 @@
           </div>
           <div class="ch">Credits</div>
           <div class="credits">
-            “Cute Bear” and “Sweet Jelly” skins adapted from artwork by
+            <div class="row credit-row">
+              <span class="rowlabel">“Cute Bear”, “Sweet Jelly”</span>
+              <span>
+                adapted from
+                <button
+                  class="linklike"
+                  onclick={() => openExternal("https://www.svgrepo.com")}
+                  >SVG Repo</button
+                > artwork (SVG Repo License)
+              </span>
+            </div>
+            <div class="row credit-row">
+              <span class="rowlabel">“Sleepy Seal”</span>
+              <span>
+                derived from public-domain art on
+                <button
+                  class="linklike"
+                  onclick={() => openExternal("https://openclipart.org")}
+                  >openclipart</button
+                >
+              </span>
+            </div>
+            <div class="row credit-row">
+              <span class="rowlabel">Full attributions</span>
+              <span>CREDITS.md in the repository</span>
+            </div>
+          </div>
+          <div class="about-social">
             <button
-              class="linklike"
-              onclick={() => openExternal("https://www.svgrepo.com")}
-              >SVG Repo</button
+              class="social-btn"
+              title="GitHub"
+              aria-label="GitHub"
+              onclick={() =>
+                openExternal(
+                  "https://github.com/Markus-Wildgruber/breathpause",
+                )}
             >
-            (SVG Repo License). “Sleepy Seal” derived from public-domain art on
+              <svg
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.04-.02-2.05-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22 0 1.6-.01 2.9-.01 3.29 0 .32.22.7.83.58A12 12 0 0 0 24 12.5C24 5.87 18.63.5 12 .5z"
+                />
+              </svg>
+            </button>
             <button
-              class="linklike"
-              onclick={() => openExternal("https://openclipart.org")}
-              >openclipart</button
-            >. See CREDITS.md for full attributions.
+              class="social-btn"
+              title="Instagram"
+              aria-label="Instagram"
+              onclick={() =>
+                openExternal("https://www.instagram.com/breathe.nice/")}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <rect x="2" y="2" width="20" height="20" rx="5.5" />
+                <circle cx="12" cy="12" r="4.2" />
+                <circle
+                  cx="17.6"
+                  cy="6.4"
+                  r="1.2"
+                  fill="currentColor"
+                  stroke="none"
+                />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
@@ -1300,12 +1319,16 @@
     font-size: 18px;
     font-weight: 600;
   }
+  /* Appearance head row: [ spacer | Work/Break centered | theme toggle right ] */
   .panehead {
-    display: flex;
-    justify-content: flex-end;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    gap: 16px;
-    margin-bottom: 8px;
+    margin-bottom: 14px;
+  }
+  .panehead .seg {
+    grid-column: 3;
+    justify-self: end;
   }
 
   .seg {
@@ -1342,8 +1365,8 @@
     border-radius: 9px;
     padding: 3px;
     gap: 2px;
-    margin: 0 auto 14px;
-    max-width: 240px;
+    grid-column: 2;
+    width: 240px;
   }
   .modeseg button {
     flex: 1;
@@ -1474,10 +1497,28 @@
     width: 16px;
     height: 16px;
   }
-  .hint {
+  .hk {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  input.ctl.hk-input {
+    width: 150px; /* beats input.ctl's 90px; fits Ctrl+Alt+Shift+P */
+    cursor: pointer;
+  }
+  .hk-btn {
+    height: 30px;
+    width: 30px;
+    border-radius: 7px;
+    background: var(--field);
+    border: 1px solid var(--line);
     color: var(--muted);
-    font-size: 12px;
-    margin: 4px 0 6px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .hk-btn:hover {
+    color: var(--fore);
   }
   .swatch {
     width: 26px;
@@ -2009,6 +2050,12 @@
     color: var(--muted);
     font-size: 12px;
     line-height: 1.55;
+  }
+  .credits .credit-row {
+    margin: 6px 0;
+  }
+  .credits .credit-row .rowlabel {
+    font-style: italic;
   }
   .import-error {
     color: #e05252;

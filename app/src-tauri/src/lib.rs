@@ -54,6 +54,8 @@ fn toggle_bubble(app: &AppHandle) {
     } else {
       let _ = win.show();
     }
+    // A hidden bubble puts the pomodoro on hold: the frontend pauses/resumes on this.
+    let _ = app.emit_to("bubble", "visibility-changed", !visible);
     if let Some(tray) = app.try_state::<Tray>() {
       tray.state.lock().unwrap().visible = !visible;
     }
@@ -73,7 +75,7 @@ fn open_settings(app: &AppHandle) {
 fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
   let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/favicon.ico"))?;
   WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-    .title("BeathPause")
+    .title("BreathPause")
     .inner_size(760.0, 640.0)
     .decorations(true)
     .resizable(false)
@@ -82,6 +84,36 @@ fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     .icon(icon)?
     .build()?;
   Ok(())
+}
+
+// Screenshot of the monitor containing the (physical, global) point — downscaled and
+// PNG-encoded. The break overlay shows it CSS-blurred as its "frosted" background:
+// unlike the acrylic window effect, a blurred image survives focus loss and renders
+// the same on every monitor.
+#[tauri::command]
+async fn capture_monitor(x: i32, y: i32) -> Result<tauri::ipc::Response, String> {
+  #[cfg(any(windows, target_os = "macos"))]
+  {
+    let monitor = xcap::Monitor::from_point(x, y).map_err(|e| e.to_string())?;
+    let img = monitor.capture_image().map_err(|e| e.to_string())?;
+    // The overlay blurs it anyway — half size keeps PNG encode + IPC fast.
+    let img = image::imageops::resize(
+      &img,
+      (img.width() / 2).max(1),
+      (img.height() / 2).max(1),
+      image::imageops::FilterType::Triangle,
+    );
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+      .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+      .map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(png))
+  }
+  #[cfg(not(any(windows, target_os = "macos")))]
+  {
+    let _ = (x, y);
+    Err("screen capture not supported on this platform".into())
+  }
 }
 
 fn open_pattern_editor(app: &AppHandle) {
@@ -109,12 +141,19 @@ fn open_pattern_editor(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .invoke_handler(tauri::generate_handler![capture_monitor])
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+    .plugin(tauri_plugin_autostart::init(
+      tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+      None,
+    ))
     // Single instance: a second launch focuses the running bubble and exits.
     .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
       if let Some(win) = app.get_webview_window("bubble") {
         let _ = win.show();
         let _ = win.set_focus();
+        let _ = app.emit_to("bubble", "visibility-changed", true);
       }
     }))
     .setup(|app| {
@@ -216,6 +255,14 @@ pub fn run() {
           }
           refresh_pause(&h2);
         });
+      });
+
+      // Hide/show the bubble when the frontend asks (the global Hide hotkey)
+      let h_tb = app.handle().clone();
+      app.listen_any("toggle-bubble", move |_| {
+        let h = h_tb.clone();
+        let h2 = h.clone();
+        let _ = h.run_on_main_thread(move || toggle_bubble(&h2));
       });
 
       // Open settings when the bubble emits open-settings (double-click in drag mode)

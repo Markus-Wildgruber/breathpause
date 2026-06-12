@@ -71,11 +71,15 @@ export const DEFAULT_SETTINGS = {
     startOnBoot: false,
     chimeOnTransitions: false,
   },
+  // Global (OS-registered) hotkeys. Ctrl+Alt+Shift+<key>: practically never taken by
+  // other apps, and unlike plain Ctrl+Alt it can't collide with AltGr characters on
+  // European layouts. Empty string = hotkey disabled.
   hotkeys: {
-    startStop: '',
-    pauseResume: '',
-    skip: '',
-    settings: '',
+    startStop: 'Ctrl+Alt+Shift+S',
+    pauseResume: 'Ctrl+Alt+Shift+P',
+    skip: 'Ctrl+Alt+Shift+N',
+    settings: 'Ctrl+Alt+Shift+O',
+    hide: 'Ctrl+Alt+Shift+H',
   },
   text: {
     phases: { in: 'In', out: 'Out', hold: 'Hold' },
@@ -142,7 +146,14 @@ export function loadSettings() {
       }
       if (raw.skinColors && typeof raw.skinColors === 'object') Object.assign(base.skinColors, raw.skinColors);
       if (raw.behavior && typeof raw.behavior === 'object') Object.assign(base.behavior, raw.behavior);
-      if (raw.hotkeys && typeof raw.hotkeys === 'object') Object.assign(base.hotkeys, raw.hotkeys);
+      if (raw.hotkeys && typeof raw.hotkeys === 'object') {
+        // '' = never configured (hotkeys predate their implementation) -> keep the
+        // default. null = explicitly disabled via the clear button -> stays off.
+        for (const [k, v] of Object.entries(raw.hotkeys)) {
+          if (v === null) base.hotkeys[k] = '';
+          else if (typeof v === 'string' && v) base.hotkeys[k] = v;
+        }
+      }
       if (raw.theme === 'light' || raw.theme === 'dark') base.theme = raw.theme;
       if (raw.text && typeof raw.text === 'object') {
         if (raw.text.phases && typeof raw.text.phases === 'object') Object.assign(base.text.phases, raw.text.phases);

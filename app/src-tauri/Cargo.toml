@@ -31,3 +31,11 @@ tauri = { version = "2.11.2", features = ["tray-icon", "image-ico"] }
 tauri-plugin-log = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+
+# Screen capture for the break overlay's frosted background. Desktop (win/mac) only:
+# Linux needs extra system libs and is only used for browser-based UI dev here.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+xcap = "0.9"
+image = { version = "0.25", default-features = false, features = ["png"] }

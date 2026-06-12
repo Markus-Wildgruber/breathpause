@@ -143,3 +143,29 @@ test('default initState (no long-break args) keeps every break short', () => {
   assert.equal(s.breakKind, 'short');
   assert.equal(s.remaining, 300);
 });
+
+test('applyConfig keeps the live countdown when the work timer is unchanged', () => {
+  let s = init();
+  s = pomo.tick(s, 600).state;                         // 10:00 into work, 900s left
+  s = pomo.applyConfig(s, { workSeconds: 1500, breakSeconds: 600 }); // same work, longer break
+  assert.equal(s.remaining, 900);                      // countdown NOT reset
+  assert.equal(s.breakSeconds, 600);                   // new break still takes effect next round
+});
+
+test('applyConfig restarts only the current segment when its own length changes', () => {
+  let s = init();
+  s = pomo.tick(s, 600).state;                         // work, 900s left
+  s = pomo.applyConfig(s, { workSeconds: 1200 });      // current (work) segment length changed
+  assert.equal(s.remaining, 1200);
+});
+
+test('applyConfig preserves mode, paused and counters', () => {
+  let s = pomo.initState(1500, 300, 900, 4);
+  s = pomo.tick(s, 1500).state;                        // -> break
+  s = pomo.pause(s);
+  s = pomo.applyConfig(s, { workSeconds: 3000 });      // changing work while on break
+  assert.equal(s.mode, 'break');
+  assert.equal(s.paused, true);
+  assert.equal(s.remaining, 300);                      // break countdown untouched
+  assert.equal(s.workCount, 1);
+});

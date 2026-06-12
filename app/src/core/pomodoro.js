@@ -105,6 +105,21 @@ var Pomodoro = (function () {
     return { state: s, events: events };
   }
 
+  // Re-apply timer config to a running session (used when settings are saved mid-session).
+  // Keeps the live countdown, mode, paused flag and counters; only restarts the CURRENT
+  // segment's countdown when that segment's own length actually changed. So saving unrelated
+  // settings — or changing the break length while working — never resets the work countdown.
+  function applyConfig(state, cfg) {
+    var s = clone(state);
+    var oldLen = segmentLength(s, s.mode);
+    if (typeof cfg.workSeconds === 'number') s.workSeconds = cfg.workSeconds;
+    if (typeof cfg.breakSeconds === 'number') s.breakSeconds = cfg.breakSeconds;
+    if (typeof cfg.longBreakSeconds === 'number') s.longBreakSeconds = cfg.longBreakSeconds;
+    if (typeof cfg.longBreakEvery === 'number') s.longBreakEvery = cfg.longBreakEvery;
+    if (segmentLength(s, s.mode) !== oldLen) s.remaining = segmentLength(s, s.mode);
+    return s;
+  }
+
   // Stop the session -> plain breathing-only bubble (work pattern, no countdown).
   function reset(state) {
     var s = clone(state);
@@ -125,7 +140,7 @@ var Pomodoro = (function () {
     return d > max ? max : d;
   }
 
-  return { initState, segmentLength, tick, pause, resume, skip, reset, limitFrameDt };
+  return { initState, segmentLength, tick, pause, resume, skip, reset, applyConfig, limitFrameDt };
 })();
 
 export default Pomodoro;

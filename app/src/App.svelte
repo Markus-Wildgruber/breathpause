@@ -27,6 +27,8 @@
   // Break takes over the whole screen with a frosted overlay; these drive that view.
   let breaking = $state(false);
   let confirmLeave = $state(false);
+  // Blob URL of a screenshot of the break monitor; the overlay shows it CSS-blurred.
+  let breakShot = $state('');
   // Lifted out of onMount so the exit/Esc handlers can advance the pomodoro.
   let pomo = null;
   let paused = false;
@@ -66,14 +68,48 @@
   // Break: fullscreen, fully interactive frosted overlay (sized/centered via CSS).
   async function applyWindowForMode(mode) {
     if (!('__TAURI_INTERNALS__' in window)) return;
-    const { getCurrentWindow, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window');
+    const { getCurrentWindow, currentMonitor, LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } =
+      await import('@tauri-apps/api/window');
     const win = getCurrentWindow();
     if (mode === 'break') {
       await setHoverDragActive(false);     // pause hover-drag, make the overlay clickable
-      await win.setFullscreen(true);
+      await win.setDecorations(false);     // no title bar over the break overlay
+      // The frost is a CSS-blurred screenshot of the desktop, taken while the window is
+      // still the small bubble. Window effects (acrylic) looked like a flat overlay,
+      // turned solid gray whenever the overlay lost focus, and glitched on multi-monitor;
+      // backdrop-filter can't sample the desktop behind a transparent window at all.
+      const mon = await currentMonitor();
+      if (mon) {
+        try {
+          // Hide the bubble so it isn't in its own screenshot; the pause also lets
+          // the desktop repaint before we capture.
+          await win.hide();
+          await new Promise(r => setTimeout(r, 80));
+          const { invoke } = await import('@tauri-apps/api/core');
+          const png = await invoke('capture_monitor', {
+            x: mon.position.x + Math.floor(mon.size.width / 2),
+            y: mon.position.y + Math.floor(mon.size.height / 2),
+          });
+          if (breakShot) URL.revokeObjectURL(breakShot);
+          breakShot = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+        } catch (e) {
+          breakShot = '';                  // overlay falls back to the plain tint
+          console.warn('screen capture failed:', e);
+        }
+        // Cover exactly the monitor the bubble is on, in physical pixels. Logical
+        // window.screen math assumed the primary monitor and mis-sized the window
+        // under mixed DPI, spilling black onto neighboring screens.
+        await win.setSize(new PhysicalSize(mon.size.width, mon.size.height));
+        await win.setPosition(new PhysicalPosition(mon.position.x, mon.position.y));
+        await win.show();                  // reappear already fullscreen — no resize flash
+      } else {
+        await win.setSize(new LogicalSize(window.screen.width, window.screen.height));
+        await win.setPosition(new LogicalPosition(0, 0));
+      }
       await win.setFocus();                // so Esc/Enter reach the window
       return;
     }
+    if (breakShot) { URL.revokeObjectURL(breakShot); breakShot = ''; }
     await win.setFullscreen(false);
     // Window width = skin width so the skin's right edge IS the window's right edge — at
     // posRight 0 the skin sits flush in the top-right corner. Grows down-left as size changes.
@@ -134,17 +170,83 @@
       document.body.classList.add('tauri');
       setupHoverDrag();
       const { listen, emit } = await import('@tauri-apps/api/event');
-      listen('toggle-pause', () => {
-        paused = !paused;
+      function setPaused(p) {
+        paused = p;
         pomo = paused ? Pomodoro.pause(pomo) : Pomodoro.resume(pomo);
         emit('paused-changed', { paused });   // let the tray menu show Pause vs Resume
+      }
+      let pausedByHide = false;
+      listen('toggle-pause', () => {
+        pausedByHide = false;
+        setPaused(!paused);
       });
+      // Hiding the bubble puts the pomodoro on hold (no surprise break overlay while
+      // hidden). Showing it again resumes only a hide-pause, never a manual one.
+      listen('visibility-changed', ({ payload: visible }) => {
+        if (!visible && !paused) {
+          pausedByHide = true;
+          setPaused(true);
+        } else if (visible && pausedByHide) {
+          pausedByHide = false;
+          setPaused(false);
+        }
+      });
+
+      // OS-global hotkeys: the OS registers each combo and notifies us regardless of
+      // which app has focus. A combo some other app already owns simply fails to
+      // register — logged and skipped, everything else still works.
+      const { register, unregisterAll } = await import('@tauri-apps/plugin-global-shortcut');
+      const hotkeyActions = {
+        // stop = back to a fresh work session, on hold; start = run again
+        startStop: () => {
+          pausedByHide = false;
+          if (paused) {
+            setPaused(false);
+          } else {
+            pomo = newPomo();
+            setPaused(true);
+          }
+        },
+        pauseResume: () => { pausedByHide = false; setPaused(!paused); },
+        skip: () => { pomo = Pomodoro.skip(pomo).state; },
+        settings: () => emit('open-settings'),
+        hide: () => emit('toggle-bubble'),
+      };
+      async function applyHotkeys() {
+        try { await unregisterAll(); } catch {}
+        for (const [action, fn] of Object.entries(hotkeyActions)) {
+          const combo = settings.hotkeys?.[action];
+          if (!combo) continue;
+          try {
+            await register(combo, (e) => { if (e.state === 'Pressed') fn(); });
+          } catch (err) {
+            console.warn(`hotkey ${combo} not available:`, err);
+          }
+        }
+      }
+      await applyHotkeys();
+
+      // Start-on-boot: mirror the checkbox into the OS autostart entry.
+      const { enable, disable, isEnabled } = await import('@tauri-apps/plugin-autostart');
+      async function syncAutostart() {
+        try {
+          const want = !!settings.behavior?.startOnBoot;
+          if (want !== await isEnabled()) await (want ? enable() : disable());
+        } catch (e) {
+          console.warn('autostart sync failed:', e);
+        }
+      }
+      await syncAutostart();
       listen('settings-changed', async () => {
         // Invalidate skin cache so new skin picks are loaded
         for (const k of Object.keys(skins)) delete skins[k];
         settings = loadSettings();
-        pomo = newPomo();
+        // Apply the new timers to the running session instead of restarting it, so saving
+        // settings (appearance, patterns, an unchanged work timer) keeps the live countdown.
+        pomo = Pomodoro.applyConfig(pomo, settings.timers);
         await showMode(pomo.mode);
+        await applyHotkeys();
+        await syncAutostart();
       });
 
       // Persist manual drags (work only): keep the saved corner offset in sync with reality.
@@ -212,6 +314,9 @@
 </script>
 
 <main class:breaking style:font-family={ap.font}>
+  {#if breaking && breakShot}
+    <div class="break-bg" style:background-image="url({breakShot})"></div>
+  {/if}
   {#if breaking}
     <button class="break-exit" onclick={requestLeave} title="Leave break" aria-label="Leave break">✕</button>
   {/if}
@@ -285,9 +390,22 @@
     position: fixed;
     inset: 0;
     justify-content: center; /* break is fullscreen and centered */
-    background: rgba(10, 12, 18, 0.82);
-    backdrop-filter: blur(22px);
-    -webkit-backdrop-filter: blur(22px);
+    /* Fallback tint, visible only when there's no screenshot (browser dev, capture
+       failure). The real frost is .break-bg below. */
+    background: rgba(10, 12, 18, 0.45);
+    isolation: isolate;      /* keep .break-bg's z-index:-1 inside the overlay */
+  }
+  .break-bg {
+    position: fixed;
+    /* Bleed past the edges: blur fades out at the element border, and the fade
+       must land offscreen instead of as a dark vignette. */
+    inset: -48px;
+    z-index: -1;
+    background-size: cover;
+    background-position: center;
+    /* Screenshot ships at half resolution, so 14px here ≈ a 28px blur.
+       brightness replaces the old dark tint and keeps the light text readable. */
+    filter: blur(14px) brightness(0.72) saturate(0.85);
   }
   .break-exit {
     position: fixed;
