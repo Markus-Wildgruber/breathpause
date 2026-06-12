@@ -94,21 +94,39 @@ jobs:
           $p = Get-Process $name -ErrorAction SilentlyContinue
           if (!$p) { throw "app exited within 15s of launch" }
           Write-Host "App running (pid $($p.Id))"
-          # Screenshot the desktop with the bubble visible (uploaded as artifact).
+          # Desktop screenshots while the app is alive (uploaded as artifacts).
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-          $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
-          $bmp = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $bmp.Size)
-          $bmp.Save("$env:GITHUB_WORKSPACE\windows-desktop.png")
-          Write-Host "screenshot saved"
+          function Shot($file) {
+            $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$env:GITHUB_WORKSPACE\$file.png")
+            $g.Dispose(); $bmp.Dispose()
+            Write-Host "shot: $file.png"
+          }
+          Shot 'win-1-bubble'
+          # Open settings via the app's own global hotkey (synthetic input triggers
+          # OS-registered hotkeys), then tour the panes: the nav items are
+          # keyboard-accessible, so Tab advances and Enter selects.
+          [System.Windows.Forms.SendKeys]::SendWait('^%+o')
+          Start-Sleep -Seconds 6
+          Shot 'win-2-settings-appearance'
+          [System.Windows.Forms.SendKeys]::SendWait('{TAB}')   # focus first nav item
+          $i = 3
+          foreach ($pane in @('patterns','timers','skins','behavior','about')) {
+            [System.Windows.Forms.SendKeys]::SendWait('{TAB}{ENTER}')
+            Start-Sleep -Seconds 2
+            Shot "win-$i-settings-$pane"
+            $i++
+          }
           Stop-Process -Name $name -Force
 
-      - name: Upload screenshot
+      - name: Upload screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: windows-screenshot
-          path: windows-desktop.png
+          name: windows-screenshots
+          path: win-*.png
           if-no-files-found: ignore
 
       - name: Uninstall silently
