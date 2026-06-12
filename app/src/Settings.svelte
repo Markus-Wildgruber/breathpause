@@ -1,8 +1,8 @@
 <script>
   import { onMount } from 'svelte';
   import Timefmt from './core/timefmt.js';
-  import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './lib/settings-store.js';
-  import { loadSkinById, mountSkin } from './lib/skin.js';
+  import { DEFAULT_SETTINGS, loadSettings, saveSettings, newSkinId } from './lib/settings-store.js';
+  import { loadSkinById, mountSkin, scanColors, isNeutral } from './lib/skin.js';
 
   const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -37,7 +37,6 @@
     { id: 'timers',     label: 'Timers'     },
     { id: 'skins',      label: 'Skins'      },
     { id: 'behavior',   label: 'Behavior'   },
-    { id: 'text',       label: 'Text'       },
     { id: 'about',      label: 'About'      },
   ];
 
@@ -94,27 +93,34 @@
 
   // ---- skin import ----
   let importTrigger = $state(null);
-  let importingName = $state(null);
-  let importingSvg  = $state(null);
 
+  // Import a skin and add it immediately with sensible defaults: the dominant color as the
+  // recolor anchor, whole-body tint when that anchor is a grey (grey-bodied art). The name
+  // defaults to the filename — rename it by clicking its name in the gallery.
   function onImportFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      importingSvg  = ev.target.result;
-      importingName = file.name.replace(/\.svg$/i, '');
+      const svgText = ev.target.result;
+      const themeColor = scanColors(svgText, { includeNeutrals: true })[0] || null;
+      if (!s.customSkins) s.customSkins = [];
+      s.customSkins.push({
+        id: newSkinId(),
+        name: file.name.replace(/\.svg$/i, '') || 'Imported skin',
+        svgText,
+        themeColor,
+        tintNeutrals: !!themeColor && isNeutral(themeColor),
+      });
       e.target.value = '';
     };
     reader.readAsText(file);
   }
 
-  function confirmImport() {
-    if (!importingName?.trim() || !importingSvg) return;
-    if (!s.customSkins) s.customSkins = [];
-    s.customSkins.push({ id: 'custom-' + Date.now(), name: importingName.trim(), svgText: importingSvg });
-    importingName = null;
-    importingSvg  = null;
+  // Rename a custom skin in place (click its name in the gallery).
+  function renameSkin(id, name) {
+    const cs = s.customSkins.find(c => c.id === id);
+    if (cs) cs.name = name.trim() || cs.name;
   }
 
   function deleteCustomSkin(id) {
@@ -124,7 +130,7 @@
   }
 
   // Svelte action: animated skin preview. opts can be a skinId string or { skinId, fill }.
-  // When fill is provided and the skin declares a themeColor, the fill is palette-applied in memory.
+  // When fill is provided, mountSkin hue-shifts the skin from its themeColor anchor.
   function previewSkin(el, opts) {
     let skinId = typeof opts === 'string' ? opts : opts.skinId;
     let fill   = typeof opts === 'string' ? null  : opts.fill;
@@ -136,8 +142,7 @@
       try {
         const skin = await loadSkinById(skinId, s.customSkins);
         if (myRun !== runId || !el.isConnected) return;
-        const pal = (fill && skin.manifest.themeColor) ? { [skin.manifest.themeColor]: fill } : {};
-        const mounted = mountSkin(el, skin, Object.keys(pal).length ? { palette: pal } : {});
+        const mounted = mountSkin(el, skin, fill ? { fill } : {});
         let t = 0, last = performance.now();
         function loop(now) {
           if (myRun !== runId) return;
@@ -160,18 +165,20 @@
     };
   }
 
-  function buildPalette(skin, fill) {
-    if (!skin?.manifest?.themeColor || !fill) return {};
-    return { [skin.manifest.themeColor]: fill };
-  }
-
   // ---- appearance preview ----
   let previewBox = $state();
   let previewMounted = null;
+  let apTheme = $state('#888888'); // current skin's authored anchor, for the swatch baseline
+
+  // Drop the per-skin color override -> back to the skin's authored look.
+  function resetColor() {
+    const { [ap.skin]: _drop, ...rest } = s.skinColors;
+    s.skinColors = rest;
+  }
 
   $effect(() => {
     const name = ap.skin || 'orb';
-    const fill = ap.fill;
+    const fill = s.skinColors[name];
     if (!previewBox) return;
     let cancelled = false;
     (async () => {
@@ -179,8 +186,8 @@
       try { skin = await loadSkinById(name, s.customSkins); }
       catch { skin = await loadSkinById('orb', []); }
       if (!cancelled && previewBox) {
-        const pal = buildPalette(skin, fill);
-        previewMounted = mountSkin(previewBox, skin, Object.keys(pal).length ? { palette: pal } : {});
+        apTheme = skin.manifest.themeColor || '#888888';
+        previewMounted = mountSkin(previewBox, skin, fill ? { fill } : {});
       }
     })();
     return () => { cancelled = true; };
@@ -289,6 +296,12 @@
   });
 
   function previewSize(px) { return Math.round(Math.max(40, px / 4)); }
+  // Preview orb diameter (px): work scales the pixel size, break scales the screen-% size.
+  function previewDiameter() {
+    return mode === 'break'
+      ? Math.round(Math.max(40, (ap.sizePct ?? 45) / 100 * 150))
+      : previewSize(ap.sizePx);
+  }
 </script>
 
 {#snippet themeBtn()}
@@ -334,16 +347,25 @@
       <div class="pane">
         <div class="panehead"><h2>Patterns</h2>{@render themeBtn()}</div>
 
-        <div class="card">
-          <div class="ch">Selection</div>
-          <div class="row"><label for="wp">Work pattern</label>
-            <select id="wp" class="ctl" bind:value={s.timers.workPattern}>
-              {#each s.patterns as p}<option value={p.id}>{p.name}</option>{/each}
-            </select></div>
-          <div class="row"><label for="bp">Break pattern</label>
-            <select id="bp" class="ctl" bind:value={s.timers.breakPattern}>
-              {#each s.patterns as p}<option value={p.id}>{p.name}</option>{/each}
-            </select></div>
+        <div class="card patcard">
+          <div class="patcol selcol">
+            <div class="row"><label for="wp">Work pattern</label>
+              <select id="wp" class="ctl" bind:value={s.timers.workPattern}>
+                {#each s.patterns as p}<option value={p.id}>{p.name}</option>{/each}
+              </select></div>
+            <div class="row"><label for="bp">Break pattern</label>
+              <select id="bp" class="ctl" bind:value={s.timers.breakPattern}>
+                {#each s.patterns as p}<option value={p.id}>{p.name}</option>{/each}
+              </select></div>
+          </div>
+          <div class="patcol txtcol">
+            <div class="row"><label for="tin">Inhale</label>
+              <input id="tin" class="ctl" bind:value={s.text.phases.in}></div>
+            <div class="row"><label for="tout">Exhale</label>
+              <input id="tout" class="ctl" bind:value={s.text.phases.out}></div>
+            <div class="row"><label for="thold">Hold</label>
+              <input id="thold" class="ctl" bind:value={s.text.phases.hold}></div>
+          </div>
         </div>
 
         <div class="gallery">
@@ -373,17 +395,29 @@
         <div class="gallery skin-gallery">
           {#each allSkins as sk (sk.id)}
             <div class="gitem skin-gitem">
+              {#if sk.custom}
+                <button class="skin-bin" title="Delete skin" aria-label="Delete skin"
+                        onclick={() => deleteCustomSkin(sk.id)}>
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18M8 6V4h8v2m1 0v14a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V6M10 11v6M14 11v6"/>
+                  </svg>
+                </button>
+              {/if}
               <div class="skin-preview" use:previewSkin={sk.id}></div>
-              <div class="gname">{sk.name}</div>
+              {#if sk.custom}
+                <input class="gname gname-edit" value={sk.name}
+                       onchange={(e) => renameSkin(sk.id, e.target.value)}
+                       onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}>
+              {:else}
+                <div class="gname">{sk.name}</div>
+              {/if}
               <div class="skin-modes">
                 <button class="skin-btn" class:on={s.appearance.work.skin === sk.id}
                         onclick={() => s.appearance.work.skin = sk.id}>Work</button>
                 <button class="skin-btn" class:on={s.appearance.break.skin === sk.id}
                         onclick={() => s.appearance.break.skin = sk.id}>Break</button>
               </div>
-              {#if sk.custom}
-                <button class="skin-del-btn" onclick={() => deleteCustomSkin(sk.id)}>Delete</button>
-              {/if}
             </div>
           {/each}
 
@@ -397,19 +431,7 @@
 
         <input bind:this={importTrigger} type="file" accept=".svg" style:display="none"
                onchange={onImportFile}>
-
-        {#if importingName !== null}
-          <div class="card">
-            <div class="ch">Name your skin</div>
-            <div class="row"><label for="iname">Name</label>
-              <input id="iname" class="ctl" bind:value={importingName} placeholder="My skin"></div>
-            <div class="editor-foot">
-              <span class="spacer"></span>
-              <button class="btn" onclick={() => { importingName = null; importingSvg = null; }}>Cancel</button>
-              <button class="btn primary" onclick={confirmImport}>Add skin</button>
-            </div>
-          </div>
-        {/if}
+        <div class="hint">Imported skins are added straight away. Click a name to rename it; recolor it per mode under Appearance.</div>
       </div>
 
     <!-- ===== APPEARANCE ===== -->
@@ -429,10 +451,29 @@
 
         <div class="card preview">
           {#if apSub === 'skin'}
+            <div class="prev-rail">
+              <span class="vcap">Size</span>
+              {#if mode === 'break'}
+                <input class="vrange" type="range" min="10" max="90" bind:value={ap.sizePct} aria-label="Size">
+                <span class="vlabel">{ap.sizePct}%</span>
+              {:else}
+                <input class="vrange" type="range" min="60" max="480" bind:value={ap.sizePx} aria-label="Size">
+                <span class="vlabel">{ap.sizePx}px</span>
+              {/if}
+            </div>
             <div class="orbside">
               <div class="orb" bind:this={previewBox}
-                   style:width="{previewSize(ap.sizePx)}px" style:height="{previewSize(ap.sizePx)}px"
+                   style:width="{previewDiameter()}px" style:height="{previewDiameter()}px"
                    style:opacity={ap.opacity}></div>
+              <div class="orb-color">
+                <input type="color" class="swatch" bind:value={
+                  () => s.skinColors[ap.skin] ?? apTheme, (v) => s.skinColors[ap.skin] = v
+                }>
+                <input class="ctl small" bind:value={
+                  () => s.skinColors[ap.skin] ?? apTheme, (v) => s.skinColors[ap.skin] = v
+                }>
+                <button class="btn icon" disabled={!(ap.skin in s.skinColors)} onclick={resetColor} title="Reset color">↺</button>
+              </div>
             </div>
             <div class="psg">
               {#each allSkins as sk (sk.id)}
@@ -440,10 +481,17 @@
                      role="button" tabindex="0"
                      onclick={() => ap.skin = sk.id}
                      onkeydown={(e) => e.key === 'Enter' && (ap.skin = sk.id)}>
-                  <div class="psg-preview" use:previewSkin={{ skinId: sk.id, fill: ap.fill }}></div>
+                  <div class="psg-preview" use:previewSkin={{ skinId: sk.id, fill: s.skinColors[sk.id] }}></div>
                   <div class="psg-name">{sk.name}</div>
                 </div>
               {/each}
+            </div>
+            <div class="prev-rail right">
+              <span class="vcap">Opacity</span>
+              <input class="vrange" type="range" min="20" max="100" aria-label="Opacity" bind:value={
+                () => Math.round(ap.opacity * 100), (v) => ap.opacity = v / 100
+              }>
+              <span class="vlabel">{Math.round(ap.opacity * 100)}%</span>
             </div>
           {:else}
             <div class="text-sample" style:font-family={ap.font}>
@@ -494,25 +542,17 @@
         </div>
 
         {#if apSub === 'skin'}
-          <div class="card">
-            <div class="ch">Orb</div>
-            <div class="row"><label for="sz">Size</label>
-              <div class="sliderwrap"><input id="sz" type="range" min="60" max="480" bind:value={ap.sizePx}><span class="sval">{ap.sizePx}px</span></div></div>
-            <div class="row"><label for="op">Opacity</label>
-              <div class="sliderwrap"><input id="op" type="range" min="20" max="100" bind:value={
-                () => Math.round(ap.opacity * 100), (v) => ap.opacity = v / 100
-              }><span class="sval">{Math.round(ap.opacity * 100)}%</span></div></div>
-            <div class="row"><label for="fl">Fill color</label>
-              <div class="colorrow"><input type="color" class="swatch" bind:value={ap.fill}><input id="fl" class="ctl small" bind:value={ap.fill}></div></div>
-          </div>
-
-          <div class="card">
-            <div class="ch">Position</div>
-            <div class="row"><label for="pr">From right edge (px)</label>
-              <input id="pr" class="ctl" type="number" min="0" max="3000" bind:value={ap.posRight}></div>
-            <div class="row"><label for="pt">From top edge (px)</label>
-              <input id="pt" class="ctl" type="number" min="0" max="3000" bind:value={ap.posTop}></div>
-          </div>
+          {#if mode === 'break'}
+            <div class="hint">Break is shown full-screen and centered — size is a share of the screen height, so there's no position to set.</div>
+          {:else}
+            <div class="card">
+              <div class="ch">Position</div>
+              <div class="row"><label for="pr">From right edge (px)</label>
+                <input id="pr" class="ctl" type="number" min="0" max="3000" bind:value={ap.posRight}></div>
+              <div class="row"><label for="pt">From top edge (px)</label>
+                <input id="pt" class="ctl" type="number" min="0" max="3000" bind:value={ap.posTop}></div>
+            </div>
+          {/if}
         {/if}
 
         {#if apSub === 'text'}
@@ -554,21 +594,6 @@
             <input id="hksk" class="ctl" bind:value={s.hotkeys.skip} placeholder="e.g. Ctrl+Alt+N"></div>
           <div class="row"><label for="hkset">Open settings</label>
             <input id="hkset" class="ctl" bind:value={s.hotkeys.settings} placeholder="e.g. Ctrl+Alt+,"></div>
-        </div>
-      </div>
-
-    <!-- ===== TEXT ===== -->
-    {:else if pane === 'text'}
-      <div class="pane">
-        <div class="panehead"><h2>Text</h2>{@render themeBtn()}</div>
-        <div class="card">
-          <div class="ch">Phase labels</div>
-          <div class="row"><label for="tin">Inhale</label>
-            <input id="tin" class="ctl" bind:value={s.text.phases.in}></div>
-          <div class="row"><label for="tout">Exhale</label>
-            <input id="tout" class="ctl" bind:value={s.text.phases.out}></div>
-          <div class="row"><label for="thold">Hold</label>
-            <input id="thold" class="ctl" bind:value={s.text.phases.hold}></div>
         </div>
       </div>
 
@@ -656,7 +681,7 @@
   .card{background:var(--cardbg);border:1px solid var(--line);border-radius:12px;
     padding:6px 16px 14px;margin:0 0 14px}
   .card.preview{padding:0;overflow:hidden;display:flex;align-items:stretch;
-    height:200px;position:sticky;top:0;z-index:5;background:var(--card)}
+    height:200px;background:var(--card)}
   .ch{font-size:13px;font-weight:600;margin:14px 0 4px;opacity:.9}
   .row{display:grid;grid-template-columns:200px 1fr;align-items:center;gap:12px;margin:10px 0}
   .row label,.row .rowlabel{color:var(--muted);font-size:12.5px}
@@ -679,10 +704,22 @@
   .swatch{width:26px;height:26px;border-radius:7px;border:1px solid var(--muted);background:none;padding:0;cursor:pointer}
   .colorrow{display:flex;gap:9px;align-items:center}
 
-  .orbside{flex:1;display:grid;place-items:center;padding:16px 10px;
-    border-right:1px solid var(--line);
+  .orbside{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:12px;padding:14px 10px;border-right:1px solid var(--line);
     background:radial-gradient(circle at 50% 38%,rgba(79,195,247,.10),transparent 70%)}
   .orb{display:grid;place-items:center}
+  .orb-color{display:flex;gap:6px;align-items:center}
+  .orb-color input.ctl.small{width:80px}
+  .btn.icon{width:30px;height:30px;padding:0;display:grid;place-items:center;font-size:14px}
+  .btn.icon:disabled{opacity:.4;cursor:default}
+
+  /* vertical size/opacity rails flanking the skin preview */
+  .prev-rail{flex:none;width:60px;display:flex;flex-direction:column;align-items:center;
+    justify-content:space-between;gap:8px;padding:12px 6px;border-right:1px solid var(--line)}
+  .prev-rail.right{border-right:0;border-left:1px solid var(--line)}
+  .vcap{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .vrange{writing-mode:vertical-lr;direction:rtl;width:6px;flex:1;min-height:90px;accent-color:var(--accent)}
+  .vlabel{font-size:11px;color:var(--fore);white-space:nowrap}
 
   /* inline skin gallery in preview card */
   .psg{flex:1;display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start;
@@ -731,6 +768,16 @@
   .apsubseg button.on{background:var(--segSel);color:var(--segSelFg);
     box-shadow:0 1px 3px rgba(0,0,0,.18)}
 
+  /* patterns: pattern selects + phase-label text fields combined in one card,
+     two columns split by a divider (like the appearance preview card) */
+  .patcard{display:flex;padding:0;overflow:hidden}
+  .patcol{padding:8px 16px 12px}
+  .patcol.selcol{flex:2;border-right:1px solid var(--line)}
+  .patcol.txtcol{flex:1}
+  .selcol .row{grid-template-columns:110px 1fr}
+  .txtcol .row{grid-template-columns:64px 1fr}
+  .txtcol input.ctl{width:100%}
+
   /* pattern gallery */
   .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:14px}
   .gitem{background:var(--cardbg);border:1px solid var(--line);border-radius:10px;
@@ -745,7 +792,7 @@
 
   /* skin gallery */
   .skin-gallery{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
-  .skin-gitem{padding:0 0 12px;display:flex;flex-direction:column;cursor:default}
+  .skin-gitem{padding:0 0 12px;display:flex;flex-direction:column;cursor:default;position:relative}
   .skin-preview{width:100%;height:110px;display:grid;place-items:center;overflow:hidden;
     border-radius:8px 8px 0 0;
     background:radial-gradient(circle at 50% 44%,rgba(79,195,247,.09),transparent 70%)}
@@ -754,9 +801,16 @@
     padding:4px 12px;border-radius:6px;cursor:pointer;font:inherit;font-size:12px}
   .skin-btn.on{background:var(--accent);color:var(--accentFg);border-color:transparent;font-weight:600}
   .skin-gitem .gname{padding:8px 14px 0;margin-bottom:0}
-  .skin-del-btn{border:0;background:transparent;color:var(--muted);cursor:pointer;font:inherit;
-    font-size:11px;padding:4px 14px 0;text-align:left}
-  .skin-del-btn:hover{color:#e05252}
+  .gname-edit{box-sizing:border-box;width:100%;border:1px solid transparent;background:transparent;
+    color:inherit;font:inherit;font-weight:600;font-size:13px;border-radius:5px;outline:none;
+    padding:6px 12px 6px;margin-top:2px}
+  .gname-edit:hover{border-color:var(--line)}
+  .gname-edit:focus{border-color:var(--accent);background:var(--field)}
+  .skin-bin{position:absolute;top:6px;right:6px;z-index:2;border:0;border-radius:6px;
+    width:26px;height:26px;display:grid;place-items:center;cursor:pointer;
+    background:rgba(0,0,0,.28);color:#fff;opacity:.6;transition:opacity .12s,background .12s}
+  .skin-gitem:hover .skin-bin{opacity:1}
+  .skin-bin:hover{background:#e05252}
   .skin-gadd{padding:12px 14px}
 
   /* about */

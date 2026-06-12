@@ -8,5 +8,7 @@
     { "target": "bubble",    "property": "opacity", "source": "breath", "from": 0.92, "to": 0.65 },
     { "target": "bubble-hi", "property": "r",     "source": "breath", "from": 12,   "to": 3 }
   ],
-  "text": { "anchor": "below", "color": "#cfe3f5" }
+  "text": { "anchor": "below", "color": "#cfe3f5" },
+  "themeColor": "#888a85",
+  "tintNeutrals": true
 }

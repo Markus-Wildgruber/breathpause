@@ -4,15 +4,32 @@
 // A poller watches the global cursor; after dwelling over the bubble for `dwellMs`
 // the window turns interactive: cursor switches (body.hot) and a left-press anywhere
 // starts dragging the window. Leaving the bubble reverts to click-through.
+//
+// During a break the bubble goes fullscreen and must be fully interactive (exit button),
+// so the poller can be paused via setHoverDragActive(false) — which also drops
+// click-through. Switching back to work re-arms click-through.
+
+let _win = null;
+let hoverActive = true;   // false while the break overlay owns the screen
+let hot = false;          // module-scoped: shared by the poller, the drag handler, and pausing
+
+export async function setHoverDragActive(active) {
+  hoverActive = active;
+  if (!_win) return;
+  hot = false;
+  document.body.classList.remove('hot');
+  // active   -> work bubble: click-through until the cursor dwells on it again
+  // inactive -> break overlay: fully interactive so the exit button is clickable
+  await _win.setIgnoreCursorEvents(active);
+}
 
 export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 120 } = {}) {
   if (!('__TAURI_INTERNALS__' in window)) return;   // browser dev: stay fully interactive
   const { getCurrentWindow, cursorPosition } = await import('@tauri-apps/api/window');
-  const win = getCurrentWindow();
+  _win = getCurrentWindow();
 
-  await win.setIgnoreCursorEvents(true);
+  await _win.setIgnoreCursorEvents(true);
 
-  let hot = false;
   let dwellStart = 0;
   let lastInside = 0;
 
@@ -28,13 +45,14 @@ export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 1
       return;
     }
     lastDown = now;
-    win.startDragging();
+    _win.startDragging();
   });
 
   setInterval(async () => {
+    if (!hoverActive) return;   // paused while the break overlay is up
     try {
       const [cur, pos, size] = await Promise.all([
-        cursorPosition(), win.outerPosition(), win.outerSize(),
+        cursorPosition(), _win.outerPosition(), _win.outerSize(),
       ]);
       const inside =
         cur.x >= pos.x && cur.x < pos.x + size.width &&
@@ -48,7 +66,7 @@ export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 1
           if (now - dwellStart >= dwellMs) {
             hot = true;
             document.body.classList.add('hot');
-            await win.setIgnoreCursorEvents(false);
+            await _win.setIgnoreCursorEvents(false);
           }
         }
       } else {
@@ -56,7 +74,7 @@ export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 1
         if (hot && now - lastInside > leaveMs) {
           hot = false;
           document.body.classList.remove('hot');
-          await win.setIgnoreCursorEvents(true);
+          await _win.setIgnoreCursorEvents(true);
         }
       }
     } catch (e) {

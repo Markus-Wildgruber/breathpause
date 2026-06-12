@@ -7,7 +7,8 @@ export const MODES = ['work', 'break'];
 function modeDefaults(overrides) {
   return {
     skin: 'orb',
-    sizePx: 200,
+    sizePx: 200,                // work: orb diameter in px (window sizes to fit)
+    sizePct: 45,                // break: orb diameter as % of screen height (fullscreen, centered)
     opacity: 0.95,
     font: 'Segoe UI',
     labelSize: 16,
@@ -15,7 +16,6 @@ function modeDefaults(overrides) {
     showPhaseCountdown: true,
     showPomodoro: true,
     showSessions: false,
-    fill: '#4FC3F7',
     textColor: '#FFFFFF',
     posRight: 40,               // distance from right edge of primary monitor (px)
     posTop: 40,                 // distance from top edge (px)
@@ -58,9 +58,12 @@ export const DEFAULT_SETTINGS = {
   },
   patterns: DEFAULT_PATTERNS,
   customSkins: [],
+  // Per-skin fill color, keyed by skin id. Unset => skin shows as authored (its
+  // themeColor anchor). Shared across modes, so a skin keeps its color everywhere.
+  skinColors: {},
   appearance: {
-    work:  modeDefaults({ skin: 'orb', fill: '#4FC3F7', sizePx: 200 }),
-    break: modeDefaults({ skin: 'sleepy-seal', fill: '#81C784', sizePx: 320 }),
+    work:  modeDefaults({ skin: 'orb', sizePx: 200 }),
+    break: modeDefaults({ skin: 'sleepy-seal', sizePx: 320 }),
   },
   behavior: {
     autoStart: true,
@@ -83,6 +86,13 @@ export function modeKey(mode) {
   return mode === 'break' ? 'break' : 'work';
 }
 
+// A collision-proof id for an imported skin. Date.now() alone collides when the same SVG
+// is imported twice quickly, which crashes the keyed skin list (each_key_duplicate).
+export function newSkinId() {
+  const rand = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return 'custom-' + rand;
+}
+
 export function loadSettings() {
   const base = structuredClone(DEFAULT_SETTINGS);
   try {
@@ -97,7 +107,20 @@ export function loadSettings() {
         }
       }
       if (Array.isArray(raw.patterns) && raw.patterns.length > 0) base.patterns = raw.patterns;
-      if (Array.isArray(raw.customSkins)) base.customSkins = raw.customSkins;
+      if (Array.isArray(raw.customSkins)) {
+        // Guarantee well-formed, unique ids: a duplicate/missing id crashes the keyed
+        // skin list (Svelte each_key_duplicate). Drop entries with no SVG.
+        const seen = new Set();
+        base.customSkins = raw.customSkins
+          .filter(cs => cs && typeof cs === 'object' && typeof cs.svgText === 'string')
+          .map((cs, i) => {
+            let id = cs.id || `custom-${i}`;
+            while (seen.has(id)) id += `-${i}`;
+            seen.add(id);
+            return { ...cs, id };
+          });
+      }
+      if (raw.skinColors && typeof raw.skinColors === 'object') Object.assign(base.skinColors, raw.skinColors);
       if (raw.behavior && typeof raw.behavior === 'object') Object.assign(base.behavior, raw.behavior);
       if (raw.hotkeys && typeof raw.hotkeys === 'object') Object.assign(base.hotkeys, raw.hotkeys);
       if (raw.theme === 'light' || raw.theme === 'dark') base.theme = raw.theme;

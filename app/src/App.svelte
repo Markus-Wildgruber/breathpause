@@ -3,9 +3,10 @@
   import Breathing from './core/breathing.js';
   import Pomodoro from './core/pomodoro.js';
   import Timefmt from './core/timefmt.js';
+  import Pattern from './core/pattern.js';
   import { loadSkin, loadSkinById, mountSkin } from './lib/skin.js';
-  import { setupHoverDrag } from './lib/interactivity.js';
-  import { loadSettings, modeKey } from './lib/settings-store.js';
+  import { setupHoverDrag, setHoverDragActive } from './lib/interactivity.js';
+  import { loadSettings, saveSettings, modeKey } from './lib/settings-store.js';
 
   let settings = $state(loadSettings());
 
@@ -23,22 +24,12 @@
   let mounted = null;
   let currentMode = null;
 
-  // Convert settings pattern (in/out/hold) to Breathing.js pattern (inhale/exhale/hold)
-  function buildPattern(mode) {
-    const patternId = mode === 'work' ? settings.timers.workPattern : settings.timers.breakPattern;
-    const sp = (settings.patterns || []).find(p => p.id === patternId) || settings.patterns?.[0];
-    if (!sp) {
-      return { phases: [{ type: 'inhale', seconds: 5.5, label: 'breathe in' }, { type: 'exhale', seconds: 5.5, label: 'breathe out' }] };
-    }
-    const labels = settings.text?.phases || { in: 'breathe in', out: 'breathe out', hold: 'hold' };
-    return {
-      phases: sp.phases.map(ph => ({
-        type: ph.type === 'in' ? 'inhale' : ph.type === 'out' ? 'exhale' : 'hold',
-        seconds: ph.seconds,
-        label: labels[ph.type] || ph.type,
-      })),
-    };
-  }
+  // Break takes over the whole screen with a frosted overlay; these drive that view.
+  let breaking = $state(false);
+  let confirmLeave = $state(false);
+  // Lifted out of onMount so the exit/Esc handlers can advance the pomodoro.
+  let pomo = null;
+  let paused = false;
 
   function playChime() {
     if (!settings.behavior?.chimeOnTransitions) return;
@@ -71,10 +62,19 @@
     return skins[name];
   }
 
-  async function resizeForMode() {
+  // Work: small click-through bubble parked in a corner.
+  // Break: fullscreen, fully interactive frosted overlay (sized/centered via CSS).
+  async function applyWindowForMode(mode) {
     if (!('__TAURI_INTERNALS__' in window)) return;
     const { getCurrentWindow, LogicalSize, LogicalPosition } = await import('@tauri-apps/api/window');
     const win = getCurrentWindow();
+    if (mode === 'break') {
+      await setHoverDragActive(false);     // pause hover-drag, make the overlay clickable
+      await win.setFullscreen(true);
+      await win.setFocus();                // so Esc/Enter reach the window
+      return;
+    }
+    await win.setFullscreen(false);
     const winW = ap.sizePx + 40;
     const winH = ap.sizePx + 80;
     const dpr = window.devicePixelRatio || 1;
@@ -83,16 +83,29 @@
     const y = Math.max(0, ap.posTop ?? 40);
     await win.setSize(new LogicalSize(winW, winH));
     await win.setPosition(new LogicalPosition(x, y));
+    await setHoverDragActive(true);        // re-arm click-through
   }
 
   async function showMode(mode) {
     currentMode = mode;
+    breaking = (mode === 'break');
+    if (mode !== 'break') confirmLeave = false;
     ap = settings.appearance[modeKey(mode)];
     const skin = await skinFor(mode);
     textColor = ap.textColor || skin.manifest.text?.color || '#eef6ff';
-    mounted = mountSkin(stage, skin);
-    await resizeForMode();
+    mounted = mountSkin(stage, skin, { fill: settings.skinColors?.[ap.skin] });
+    await applyWindowForMode(mode);
   }
+
+  // End the break early and return to work (the exit button / Esc confirmation).
+  // Idempotent: Enter can fire both the focused button's click and the window handler.
+  function leaveBreak() {
+    if (!confirmLeave) return;
+    confirmLeave = false;
+    if (pomo) pomo = Pomodoro.skip(pomo).state;
+  }
+  function requestLeave() { confirmLeave = true; }
+  function cancelLeave() { confirmLeave = false; }
 
   function newPomo() {
     const t = settings.timers;
@@ -100,8 +113,20 @@
   }
 
   onMount(async () => {
-    let pomo = newPomo();
-    let paused = false;
+    pomo = newPomo();
+    paused = false;
+
+    // Esc opens the leave-break confirmation; Enter confirms it (default = leave).
+    window.addEventListener('keydown', (e) => {
+      if (!breaking) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        confirmLeave ? cancelLeave() : requestLeave();
+      } else if (e.key === 'Enter' && confirmLeave) {
+        e.preventDefault();
+        leaveBreak();
+      }
+    });
 
     if ('__TAURI_INTERNALS__' in window) {
       document.body.classList.add('tauri');
@@ -117,6 +142,22 @@
         settings = loadSettings();
         pomo = newPomo();
         await showMode(pomo.mode);
+      });
+
+      // Persist manual drags (work only): keep the saved corner offset in sync with reality.
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      let moveTimer;
+      getCurrentWindow().onMoved(({ payload: { x, y } }) => {
+        if (currentMode !== 'work') return;   // break is fullscreen — nothing to persist
+        clearTimeout(moveTimer);
+        moveTimer = setTimeout(() => {
+          const dpr = window.devicePixelRatio || 1;
+          const winW = settings.appearance.work.sizePx + 40;
+          const screenW = window.screen.availWidth / dpr;
+          settings.appearance.work.posRight = Math.max(0, Math.round(screenW - winW - x / dpr));
+          settings.appearance.work.posTop = Math.max(0, Math.round(y / dpr));
+          saveSettings($state.snapshot(settings));
+        }, 300);
       });
     }
     await showMode(pomo.mode);
@@ -137,7 +178,7 @@
         showMode(pomo.mode);
       }
 
-      const pattern = buildPattern(currentMode);
+      const pattern = Pattern.toEnginePattern(settings, currentMode);
       if (!paused) breathT += dt;
       const breath = Breathing.sizeAt(pattern, breathT);
       mounted?.apply({ breath, time: Math.sin(breathT) });
@@ -165,13 +206,33 @@
   });
 </script>
 
-<main style:font-family={ap.font}>
+<main class:breaking style:font-family={ap.font}>
+  {#if breaking}
+    <button class="break-exit" onclick={requestLeave} title="Leave break" aria-label="Leave break">✕</button>
+  {/if}
+
   <div class="stage" bind:this={stage}
-       style:width="{ap.sizePx}px" style:height="{ap.sizePx}px" style:opacity={ap.opacity}></div>
+       style:width={breaking ? `${ap.sizePct ?? 45}vh` : `${ap.sizePx}px`}
+       style:height={breaking ? `${ap.sizePct ?? 45}vh` : `${ap.sizePx}px`}
+       style:opacity={ap.opacity}></div>
   <div class="textblock" style:transform="translate({ap.textOffsetX ?? 0}px, {ap.textOffsetY ?? 0}px)">
     <div class="label" style:color={textColor} style:font-size="{ap.labelSize}px">{[label, phaseCountdown].filter(Boolean).join(' ')}</div>
     <div class="pomo" style:color={textColor}>{[pomoText, sessionsText].filter(Boolean).join('  ')}</div>
   </div>
+
+  {#if breaking && confirmLeave}
+    <div class="confirm-backdrop" role="presentation">
+      <div class="confirm" role="dialog" aria-modal="true">
+        <div class="confirm-msg">Leave the break?</div>
+        <div class="confirm-btns">
+          <!-- svelte-ignore a11y_autofocus -->
+          <button class="cb cb-yes" autofocus onclick={leaveBreak}>Yes</button>
+          <button class="cb cb-no" onclick={cancelLeave}>No</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if skinError}<div class="error">{skinError}</div>{/if}
 </main>
 
@@ -212,4 +273,72 @@
     color: #ff9d9d;
     opacity: 0.8;
   }
+
+  /* ===== break overlay ===== */
+  main.breaking {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 12, 18, 0.82);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+  }
+  .break-exit {
+    position: fixed;
+    top: 18px;
+    left: 18px;
+    width: 42px;
+    height: 42px;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 10;
+  }
+  .break-exit:hover {
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 20;
+  }
+  .confirm {
+    background: #1c1c1e;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 22px 24px;
+    text-align: center;
+    min-width: 260px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  }
+  .confirm-msg {
+    color: #fff;
+    font-size: 16px;
+    margin-bottom: 18px;
+  }
+  .confirm-btns {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  .cb {
+    flex: 1;
+    padding: 10px 18px;
+    border-radius: 9px;
+    border: 0;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    cursor: pointer;
+  }
+  .cb-yes { background: #e05252; }   /* default answer = leave */
+  .cb-yes:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .cb-no  { background: #4caf72; }
 </style>
