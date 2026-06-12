@@ -13,14 +13,16 @@
 
 // Load a skin by ID: checks customSkins first, falls back to bundled skins folder.
 // A custom skin's themeColor (the recolor anchor, picked at import) is carried onto
-// the manifest so mountSkin can hue-shift it just like a bundled skin.
+// the manifest so mountSkin can hue-shift it just like a bundled skin. Skins imported
+// as a folder/zip also bring their own bindings + text hints (bare-SVG imports have none).
 export async function loadSkinById(skinId, customSkins = []) {
   const custom = (customSkins || []).find(cs => cs.id === skinId);
   if (custom) {
     return {
       manifest: {
-        name: custom.name, bindings: [],
+        name: custom.name, bindings: custom.bindings || [],
         themeColor: custom.themeColor || null, tintNeutrals: !!custom.tintNeutrals,
+        text: custom.text || undefined,
       },
       svgText: custom.svgText, baseUrl: null,
     };
@@ -269,6 +271,35 @@ export function scanColors(svgText, { includeNeutrals = false, limit = 8 } = {})
     if (reps.length >= limit) break;
   }
   return reps;
+}
+
+// Validate a skin-folder import (skin.json text + the SVG it references) and normalize
+// it into the fields persisted on a customSkins entry. Throws with a user-facing message
+// when something is broken — surfaced at import time instead of a silent orb fallback.
+export function parseSkinImport(manifestText, svgText) {
+  let manifest;
+  try { manifest = JSON.parse(manifestText); }
+  catch { throw new Error('skin.json is not valid JSON'); }
+  if (!manifest.name) throw new Error('skin.json: missing "name"');
+  if (typeof svgText !== 'string' || !/<svg[\s>]/i.test(svgText)) {
+    throw new Error('the skin SVG has no <svg> root');
+  }
+  const bindings = manifest.bindings || [];
+  for (const b of bindings) {
+    validateBinding(b);
+    // mountSkin would throw later anyway — fail here, where the user can react
+    if (!new RegExp(`\\bid=["']${escapeRegExp(b.target)}["']`).test(svgText)) {
+      throw new Error(`binding target "${b.target}" not found in the SVG`);
+    }
+  }
+  return {
+    name: manifest.name,
+    svgText,
+    themeColor: manifest.themeColor || null,
+    tintNeutrals: !!manifest.tintNeutrals,
+    bindings,
+    text: manifest.text || null,
+  };
 }
 
 const PROPERTIES = ['scale', 'r', 'opacity', 'translateX', 'translateY'];

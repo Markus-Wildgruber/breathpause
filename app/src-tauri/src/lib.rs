@@ -1,3 +1,4 @@
+use std::sync::Mutex;
 use tauri::{
   menu::{Menu, MenuItem, PredefinedMenuItem},
   tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -12,13 +13,51 @@ struct TrayTextPayload {
   exit: String,
 }
 
+#[derive(serde::Deserialize)]
+struct PausedPayload {
+  paused: bool,
+}
+
+// Live tray state + handles so the toggle/pause labels can flip with the app's state.
+struct TrayState {
+  visible: bool,
+  paused: bool,
+  pause_label: String,
+  resume_label: String,
+}
+struct Tray {
+  toggle: MenuItem<tauri::Wry>,
+  pause: MenuItem<tauri::Wry>,
+  settings: MenuItem<tauri::Wry>,
+  exit: MenuItem<tauri::Wry>,
+  state: Mutex<TrayState>,
+}
+
+fn refresh_toggle(app: &AppHandle) {
+  if let Some(tray) = app.try_state::<Tray>() {
+    let label = if tray.state.lock().unwrap().visible { "Hide" } else { "Show" };
+    let _ = tray.toggle.set_text(label);
+  }
+}
+fn refresh_pause(app: &AppHandle) {
+  if let Some(tray) = app.try_state::<Tray>() {
+    let st = tray.state.lock().unwrap();
+    let _ = tray.pause.set_text(if st.paused { &st.resume_label } else { &st.pause_label });
+  }
+}
+
 fn toggle_bubble(app: &AppHandle) {
   if let Some(win) = app.get_webview_window("bubble") {
-    if win.is_visible().unwrap_or(true) {
+    let visible = win.is_visible().unwrap_or(true);
+    if visible {
       let _ = win.hide();
     } else {
       let _ = win.show();
     }
+    if let Some(tray) = app.try_state::<Tray>() {
+      tray.state.lock().unwrap().visible = !visible;
+    }
+    refresh_toggle(app);
   }
 }
 
@@ -34,7 +73,7 @@ fn open_settings(app: &AppHandle) {
 fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
   let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/favicon.ico"))?;
   WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-    .title("breathpause — settings")
+    .title("BeathPause")
     .inner_size(760.0, 640.0)
     .decorations(true)
     .resizable(false)
@@ -62,6 +101,7 @@ fn open_pattern_editor(app: &AppHandle) {
   .decorations(true)
   .resizable(false)
   .center()
+  .visible(false)   // shown by the frontend after the saved position is restored (no flash)
   .icon(icon) else { return };
   let _ = builder.build();
 }
@@ -86,12 +126,26 @@ pub fn run() {
         )?;
       }
 
-      let toggle = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
-      let pause = MenuItem::with_id(app, "pause", "Pause / Resume", true, None::<&str>)?;
+      // Labels start at the bubble's initial state: visible (Hide) and running (Pause).
+      let toggle = MenuItem::with_id(app, "toggle", "Hide", true, None::<&str>)?;
+      let pause = MenuItem::with_id(app, "pause", "Pause", true, None::<&str>)?;
       let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
       let sep = PredefinedMenuItem::separator(app)?;
       let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
       let menu = Menu::with_items(app, &[&toggle, &pause, &settings, &sep, &quit])?;
+
+      app.manage(Tray {
+        toggle: toggle.clone(),
+        pause: pause.clone(),
+        settings: settings.clone(),
+        exit: quit.clone(),
+        state: Mutex::new(TrayState {
+          visible: true,
+          paused: false,
+          pause_label: "Pause".into(),
+          resume_label: "Resume".into(),
+        }),
+      });
 
       TrayIconBuilder::with_id("main")
         .icon(tauri::image::Image::from_bytes(include_bytes!(
@@ -109,15 +163,17 @@ pub fn run() {
           "quit" => app.exit(0),
           _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
-          if let TrayIconEvent::Click {
+        .on_tray_icon_event(|tray, event| match event {
+          TrayIconEvent::Click {
             button: MouseButton::Left,
             button_state: MouseButtonState::Up,
             ..
-          } = event
-          {
-            toggle_bubble(tray.app_handle());
-          }
+          } => toggle_bubble(tray.app_handle()),
+          TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+          } => open_settings(tray.app_handle()),
+          _ => {}
         })
         .build(app)?;
 
@@ -125,25 +181,40 @@ pub fn run() {
       let h_quit = app.handle().clone();
       app.listen_any("app-quit", move |_| h_quit.exit(0));
 
-      // Rebuild tray menu with translated labels when settings are saved
+      // Update tray labels (in place) when settings are saved. Pause/Resume words are stored
+      // so the dynamic pause label uses them; the toggle (Show/Hide) stays state-driven.
       let h_tray = app.handle().clone();
       app.listen_any("apply-tray-text", move |event| {
         let Ok(payload) = serde_json::from_str::<TrayTextPayload>(event.payload()) else {
           return;
         };
-        let h = h_tray.clone();
-        let h2 = h.clone();
-        let _ = h.run_on_main_thread(move || {
-          let h = &h2;
-          let Ok(toggle) = MenuItem::with_id(h, "toggle", "Show / Hide", true, None::<&str>) else { return };
-          let Ok(pause_item) = MenuItem::with_id(h, "pause", &payload.pause, true, None::<&str>) else { return };
-          let Ok(settings_item) = MenuItem::with_id(h, "settings", &payload.settings, true, None::<&str>) else { return };
-          let Ok(sep) = PredefinedMenuItem::separator(h) else { return };
-          let Ok(quit_item) = MenuItem::with_id(h, "quit", &payload.exit, true, None::<&str>) else { return };
-          let Ok(menu) = Menu::with_items(h, &[&toggle, &pause_item, &settings_item, &sep, &quit_item]) else { return };
-          if let Some(tray) = h.tray_by_id("main") {
-            let _ = tray.set_menu(Some(menu));
+        let h2 = h_tray.clone();
+        let _ = h_tray.run_on_main_thread(move || {
+          if let Some(tray) = h2.try_state::<Tray>() {
+            {
+              let mut st = tray.state.lock().unwrap();
+              st.pause_label = payload.pause.clone();
+              st.resume_label = payload.resume.clone();
+            }
+            let _ = tray.settings.set_text(&payload.settings);
+            let _ = tray.exit.set_text(&payload.exit);
           }
+          refresh_pause(&h2);
+        });
+      });
+
+      // The bubble reports its pause state so the menu can show Pause vs Resume.
+      let h_paused = app.handle().clone();
+      app.listen_any("paused-changed", move |event| {
+        let Ok(payload) = serde_json::from_str::<PausedPayload>(event.payload()) else {
+          return;
+        };
+        let h2 = h_paused.clone();
+        let _ = h_paused.run_on_main_thread(move || {
+          if let Some(tray) = h2.try_state::<Tray>() {
+            tray.state.lock().unwrap().paused = payload.paused;
+          }
+          refresh_pause(&h2);
         });
       });
 

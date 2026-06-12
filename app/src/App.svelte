@@ -75,8 +75,10 @@
       return;
     }
     await win.setFullscreen(false);
-    const winW = ap.sizePx + 40;
-    const winH = ap.sizePx + 80;
+    // Window width = skin width so the skin's right edge IS the window's right edge — at
+    // posRight 0 the skin sits flush in the top-right corner. Grows down-left as size changes.
+    const winW = ap.sizePx;
+    const winH = ap.sizePx + 64;
     const dpr = window.devicePixelRatio || 1;
     const screenW = window.screen.availWidth / dpr;
     const x = Math.max(0, screenW - winW - (ap.posRight ?? 40));
@@ -131,10 +133,11 @@
     if ('__TAURI_INTERNALS__' in window) {
       document.body.classList.add('tauri');
       setupHoverDrag();
-      const { listen } = await import('@tauri-apps/api/event');
+      const { listen, emit } = await import('@tauri-apps/api/event');
       listen('toggle-pause', () => {
         paused = !paused;
         pomo = paused ? Pomodoro.pause(pomo) : Pomodoro.resume(pomo);
+        emit('paused-changed', { paused });   // let the tray menu show Pause vs Resume
       });
       listen('settings-changed', async () => {
         // Invalidate skin cache so new skin picks are loaded
@@ -152,7 +155,7 @@
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
           const dpr = window.devicePixelRatio || 1;
-          const winW = settings.appearance.work.sizePx + 40;
+          const winW = settings.appearance.work.sizePx;
           const screenW = window.screen.availWidth / dpr;
           settings.appearance.work.posRight = Math.max(0, Math.round(screenW - winW - x / dpr));
           settings.appearance.work.posTop = Math.max(0, Math.round(y / dpr));
@@ -219,7 +222,7 @@
        style:opacity={ap.opacity}></div>
   <div class="textblock" style:transform="translate({ap.textOffsetX ?? 0}px, {ap.textOffsetY ?? 0}px)">
     <div class="label" style:color={textColor} style:font-size="{ap.labelSize}px">{[label, phaseCountdown].filter(Boolean).join(' ')}</div>
-    <div class="pomo" style:color={textColor}>{[pomoText, sessionsText].filter(Boolean).join('  ')}</div>
+    <div class="pomo" style:color={textColor} style:font-size="{ap.subSize}px">{[pomoText, sessionsText].filter(Boolean).join('  ')}</div>
   </div>
 
   {#if breaking && confirmLeave}
@@ -244,7 +247,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* Work bubble: skin anchored at the top so resizing grows downward (top stays at posTop). */
+    justify-content: flex-start;
   }
   .stage {
     width: min(76vmin, 560px);
@@ -280,6 +284,7 @@
   main.breaking {
     position: fixed;
     inset: 0;
+    justify-content: center; /* break is fullscreen and centered */
     background: rgba(10, 12, 18, 0.82);
     backdrop-filter: blur(22px);
     -webkit-backdrop-filter: blur(22px);

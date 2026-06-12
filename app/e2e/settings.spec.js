@@ -1,11 +1,18 @@
 import { test, expect } from '@playwright/test';
 import { trackErrors } from './_helpers.js';
 
-test('renders all nav panes with no uncaught errors', async ({ page }) => {
+test('every nav pane renders with no uncaught errors', async ({ page }) => {
   const errors = trackErrors(page);
   await page.goto('/settings.html');
-  await expect(page.locator('.rail .navitem')).toHaveCount(6);
-  await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible();
+  const items = page.locator('.rail .navitem');
+  await expect(items).toHaveCount(6);
+
+  for (const label of ['Patterns', 'Timers', 'Skins', 'Behavior', 'About', 'Appearance']) {
+    const item = items.filter({ hasText: label });
+    await item.click();
+    await expect(item).toHaveClass(/sel/);
+    await expect(page.locator('.pane')).toBeVisible();
+  }
   expect(errors).toEqual([]);
 });
 
@@ -37,7 +44,11 @@ test('searchable font dropdown filters and selects', async ({ page }) => {
 test('Save persists settings to localStorage', async ({ page }) => {
   await page.goto('/settings.html');
   await page.locator('.rail .navitem', { hasText: 'Timers' }).click();
-  await page.locator('#wt').fill('01:30');
+
+  // Work duration is a Stepper: type into its field and commit with Enter.
+  const work = page.locator('.card.timers .row', { hasText: 'Work' }).locator('.sf-input');
+  await work.fill('01:30');
+  await work.press('Enter');
   await page.getByRole('button', { name: 'Save' }).click();
 
   const stored = await page.evaluate(() => localStorage.getItem('breathpause.settings'));

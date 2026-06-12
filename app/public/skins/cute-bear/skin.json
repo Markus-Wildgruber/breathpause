@@ -8,9 +8,9 @@
     { "target": "bear",       "property": "scale",   "source": "breath", "from": 1.0, "to": 1.06, "origin": [523, 518] },
     { "target": "mouthOpen",  "property": "scale",   "source": "breath", "from": 0.0, "to": 1.0,  "origin": [578, 454] },
     { "target": "mouthRest", "property": "opacity", "source": "breath", "from": 1.0, "to": 0.0 },
-    { "target": "lidTopL", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [530, 262] },
-    { "target": "lidBotL", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [530, 358] },
-    { "target": "lidTopR", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [601, 269] },
-    { "target": "lidBotR", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [601, 361] }
+    { "target": "lidTopL", "property": "translateY", "source": "breath", "from": 0.0, "to": -50.0 },
+    { "target": "lidBotL", "property": "translateY", "source": "breath", "from": 0.0, "to": 50.0 },
+    { "target": "lidTopR", "property": "translateY", "source": "breath", "from": 0.0, "to": -46.0 },
+    { "target": "lidBotR", "property": "translateY", "source": "breath", "from": 0.0, "to": 46.0 }
   ]
 }

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   DEFAULT_SETTINGS, DEFAULT_PATTERNS, MODES, modeKey, loadSettings, saveSettings, newSkinId,
+  applyPatternResult,
 } from '../src/lib/settings-store.js';
 
 const KEY = 'breathpause.settings';
@@ -144,6 +145,44 @@ test('saveSettings round-trips a modified value through loadSettings', () => {
   const reloaded = loadSettings();
   assert.equal(reloaded.timers.workSeconds, 1234);
   assert.equal(reloaded.appearance.work.textOffsetY, 50);
+});
+
+// --- pattern editor result -> settings (the "save new pattern" flow) ---
+
+test('applyPatternResult appends a new pattern (id not present) without mutating input', () => {
+  const patterns = [{ id: 'a', name: 'A', phases: [] }];
+  const out = applyPatternResult(patterns, { workPattern: 'a', breakPattern: 'a' },
+    { id: 'p1', name: 'New', phases: [{ type: 'in', seconds: 4 }] });
+  assert.equal(out.patterns.length, 2);
+  assert.ok(out.patterns.some((p) => p.id === 'p1'), 'new pattern appended');
+  assert.equal(patterns.length, 1, 'input array not mutated');
+});
+
+test('applyPatternResult replaces an existing pattern by id', () => {
+  const out = applyPatternResult([{ id: 'a', name: 'A', phases: [] }], {},
+    { id: 'a', name: 'A2', phases: [{ type: 'out', seconds: 6 }] });
+  assert.equal(out.patterns.length, 1);
+  assert.equal(out.patterns[0].name, 'A2');
+});
+
+test('applyPatternResult deletes and re-points work/break selection', () => {
+  const out = applyPatternResult([{ id: 'a' }, { id: 'b' }],
+    { workPattern: 'a', breakPattern: 'a' }, { id: 'a', deleted: true });
+  assert.deepEqual(out.patterns.map((p) => p.id), ['b']);
+  assert.equal(out.timers.workPattern, 'b');
+  assert.equal(out.timers.breakPattern, 'b');
+});
+
+test('saving a NEW pattern from the editor persists it (the reported bug)', () => {
+  // Before the fix the editor result was only kept in the Settings window's memory and lost
+  // unless the user also hit Settings > Save. The handler now persists immediately.
+  setStored(null);
+  const s = loadSettings();
+  const result = { id: 'p-new', name: 'My Pattern', phases: [{ type: 'in', seconds: 5.5 }] };
+  const next = applyPatternResult(s.patterns, s.timers, result);
+  saveSettings({ ...s, patterns: next.patterns, timers: next.timers });
+  const reloaded = loadSettings();
+  assert.ok(reloaded.patterns.some((p) => p.id === 'p-new'), 'new pattern survives a reload');
 });
 
 test('modeKey maps break to break and everything else to work', () => {

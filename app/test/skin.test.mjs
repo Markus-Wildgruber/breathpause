@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { validateBinding, applyPalette, recolor, scanColors, isNeutral, sanitizeSvg } from '../src/lib/skin.js';
+import {
+  validateBinding, applyPalette, recolor, scanColors, isNeutral, sanitizeSvg,
+  parseSkinImport, loadSkinById,
+} from '../src/lib/skin.js';
 
 const ok = { target: 'orb', property: 'scale', source: 'breath', from: 0, to: 1 };
 
@@ -155,4 +158,57 @@ test('scanColors includeNeutrals offers the dominant grey as an anchor', () => {
   assert.ok(isNeutral(withN[0]), 'dominant grey should be first/auto-picked');
   assert.equal(withN.length, 2, 'one grey rep + one red');
   assert.deepEqual(scanColors(svg).filter(isNeutral), [], 'default scan still hides greys');
+});
+
+// ---- skin-folder import (zip contents: skin.json + svg) ----
+
+const GOOD_MANIFEST = JSON.stringify({
+  name: 'My Bear',
+  themeColor: '#C38155',
+  tintNeutrals: false,
+  text: { color: '#3A2C50' },
+  bindings: [
+    { target: 'body', property: 'scale', source: 'breath', from: 1, to: 1.06, origin: [50, 50] },
+    { target: 'mouth', property: 'opacity', source: 'breath', from: 1, to: 0 },
+  ],
+});
+const GOOD_SVG = '<svg viewBox="0 0 100 100"><g id="body"><circle r="40"/></g><path id="mouth"/></svg>';
+
+test('parseSkinImport accepts a valid skin folder and normalizes it', () => {
+  const out = parseSkinImport(GOOD_MANIFEST, GOOD_SVG);
+  assert.equal(out.name, 'My Bear');
+  assert.equal(out.bindings.length, 2);
+  assert.equal(out.themeColor, '#C38155');
+  assert.deepEqual(out.text, { color: '#3A2C50' });
+  assert.equal(out.svgText, GOOD_SVG);
+});
+
+test('parseSkinImport rejects broken JSON, missing name, and a non-SVG', () => {
+  assert.throws(() => parseSkinImport('{ not json', GOOD_SVG), /not valid JSON/);
+  assert.throws(() => parseSkinImport('{"bindings":[]}', GOOD_SVG), /missing "name"/);
+  assert.throws(() => parseSkinImport('{"name":"x"}', 'hello'), /no <svg> root/);
+});
+
+test('parseSkinImport rejects an invalid binding (delegates to validateBinding)', () => {
+  const m = JSON.stringify({ name: 'x', bindings: [{ target: 'body', property: 'wobble', source: 'breath', from: 0, to: 1 }] });
+  assert.throws(() => parseSkinImport(m, GOOD_SVG), /unknown property/);
+});
+
+test('parseSkinImport rejects a binding whose target is not in the SVG', () => {
+  const m = JSON.stringify({ name: 'x', bindings: [{ target: 'ghost', property: 'opacity', source: 'breath', from: 0, to: 1 }] });
+  assert.throws(() => parseSkinImport(m, GOOD_SVG), /"ghost" not found/);
+});
+
+test('loadSkinById carries an imported skin\'s bindings and text onto the manifest', async () => {
+  const entry = { id: 'c1', ...parseSkinImport(GOOD_MANIFEST, GOOD_SVG) };
+  const skin = await loadSkinById('c1', [entry]);
+  assert.equal(skin.manifest.name, 'My Bear');
+  assert.equal(skin.manifest.bindings.length, 2);
+  assert.equal(skin.manifest.bindings[0].target, 'body');
+  assert.deepEqual(skin.manifest.text, { color: '#3A2C50' });
+});
+
+test('loadSkinById still gives a bare-SVG custom skin empty bindings', async () => {
+  const skin = await loadSkinById('c2', [{ id: 'c2', name: 'Plain', svgText: '<svg/>' }]);
+  assert.deepEqual(skin.manifest.bindings, []);
 });

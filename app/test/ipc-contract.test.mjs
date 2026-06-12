@@ -26,9 +26,12 @@ const JS_TO_RUST = ['app-quit', 'apply-tray-text', 'open-settings', 'open-patter
 // Events the Rust side emits for the JS side to handle.
 const RUST_TO_JS = ['toggle-pause'];
 
+// Match emit('ev') / emit("ev") regardless of quote style (prettier may flip them).
+const jsCalls = (fn, ev) => jsSources.includes(`${fn}('${ev}'`) || jsSources.includes(`${fn}("${ev}"`);
+
 test('JS->Rust events are emitted in JS and listened for in Rust', () => {
   for (const ev of JS_TO_RUST) {
-    assert.ok(jsSources.includes(`emit('${ev}'`), `JS should emit '${ev}'`);
+    assert.ok(jsCalls('emit', ev), `JS should emit '${ev}'`);
     assert.ok(libRs.includes(`listen_any("${ev}"`), `Rust should listen_any for "${ev}"`);
   }
 });
@@ -36,7 +39,7 @@ test('JS->Rust events are emitted in JS and listened for in Rust', () => {
 test('Rust->JS events are emitted in Rust and listened for in JS', () => {
   for (const ev of RUST_TO_JS) {
     assert.ok(libRs.includes(`"${ev}"`), `Rust should emit "${ev}"`);
-    assert.ok(jsSources.includes(`listen('${ev}'`), `JS should listen for '${ev}'`);
+    assert.ok(jsCalls('listen', ev), `JS should listen for '${ev}'`);
   }
 });
 

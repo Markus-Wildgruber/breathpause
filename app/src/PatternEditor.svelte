@@ -1,16 +1,28 @@
 <script>
   import { onMount } from 'svelte';
+  import Stepper from './lib/Stepper.svelte';
+  import { loadSettings, saveSettings, applyPatternResult } from './lib/settings-store.js';
 
   const DRAFT_KEY = 'breathpause.patternDraft';
-  const RESULT_KEY = 'breathpause.patternResult';
   const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-  // Theme follows OS — no toggle in this window
-  const theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  // Follow the saved app theme (shared origin -> same localStorage); fall back to OS.
+  const osTheme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  const theme = loadSettings().theme || osTheme;
 
   let pattern = $state({ id: '', name: '', phases: [] });
   let isNew = $state(true);
   let error = $state('');
+  let existingNames = $state([]);   // other patterns' names, to flag duplicates
+
+  // Live duplicate-name check (case-insensitive), used to mark the field and block save.
+  let nameExists = $derived(
+    pattern.name.trim() !== '' &&
+    existingNames.some((n) => n.trim().toLowerCase() === pattern.name.trim().toLowerCase()),
+  );
+
+  // Float seconds for the phase steppers (e.g. 5.5).
+  const parseSeconds = (t) => { const n = parseFloat(t); return Number.isFinite(n) ? n : null; };
 
   onMount(async () => {
     try {
@@ -18,6 +30,7 @@
       if (raw) {
         pattern = structuredClone(raw.pattern);
         isNew = raw.isNew ?? true;
+        existingNames = raw.existingNames ?? [];
       }
     } catch {}
 
@@ -26,6 +39,8 @@
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const win = getCurrentWindow();
       await restoreWindowPosition('pattern-editor', win);
+      await win.show();        // built hidden in Rust; reveal after positioning (no flash)
+      await win.setFocus();
       return await trackWindowPosition('pattern-editor', win);
     }
   });
@@ -38,27 +53,36 @@
     pattern.phases.splice(i, 1);
   }
 
+  // Persist the result straight into shared settings (this window owns the save), then tell
+  // the settings window to refresh its gallery and the bubble to reload. No cross-window
+  // hand-off required for the data to survive.
+  function persistResult(result) {
+    const fresh = loadSettings();
+    const next = applyPatternResult(fresh.patterns, fresh.timers, result);
+    saveSettings({ ...fresh, patterns: next.patterns, timers: next.timers });
+  }
+
+  async function closeWithRefresh() {
+    if (!inTauri) return;
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit('pattern-editor-saved');   // settings window re-reads patterns
+    await emit('settings-changed');       // bubble reloads
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().close();
+  }
+
   async function onSave() {
     error = '';
     if (!pattern.name.trim()) { error = 'Name is required.'; return; }
+    if (nameExists) { error = 'A pattern with this name already exists.'; return; }
     if (pattern.phases.length === 0) { error = 'Add at least one phase.'; return; }
-    localStorage.setItem(RESULT_KEY, JSON.stringify($state.snapshot(pattern)));
-    if (inTauri) {
-      const { emit } = await import('@tauri-apps/api/event');
-      await emit('pattern-editor-saved');
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow().close();
-    }
+    persistResult($state.snapshot(pattern));
+    await closeWithRefresh();
   }
 
   async function onDelete() {
-    localStorage.setItem(RESULT_KEY, JSON.stringify({ id: pattern.id, deleted: true }));
-    if (inTauri) {
-      const { emit } = await import('@tauri-apps/api/event');
-      await emit('pattern-editor-saved');
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow().close();
-    }
+    persistResult({ id: pattern.id, deleted: true });
+    await closeWithRefresh();
   }
 
   async function onCancel() {
@@ -73,18 +97,13 @@
 <div class="win" data-theme={theme}>
   <div class="pane">
     <div class="panehead">
-      <h2>{isNew ? 'New pattern' : 'Edit pattern'}</h2>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input class="title-input" class:invalid={nameExists} bind:value={pattern.name}
+             placeholder="pattern name" aria-label="Pattern name">
     </div>
+    {#if nameExists}<div class="err">A pattern with this name already exists.</div>{/if}
 
     <div class="card">
-      <div class="row">
-        <label for="pname">Name</label>
-        <input id="pname" class="ctl name-input" bind:value={pattern.name} placeholder="e.g. Box breathing">
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="ch">Phases</div>
       {#each pattern.phases as phase, i}
         <div class="phase-row">
           <select class="ctl phase-type" bind:value={phase.type}>
@@ -92,7 +111,8 @@
             <option value="out">Exhale</option>
             <option value="hold">Hold</option>
           </select>
-          <input type="number" class="ctl phase-sec" min="0.1" max="120" step="0.1" bind:value={phase.seconds}>
+          <Stepper bind:value={phase.seconds} min={0.1} max={120} step={0.5}
+                   format={(v) => String(v)} parse={parseSeconds} width={64} />
           <span class="phase-unit">s</span>
           <button class="phase-del" onclick={() => removePhase(i)} title="Remove">×</button>
         </div>
@@ -130,7 +150,8 @@
     {/if}
     <span class="spacer"></span>
     <button class="btn" onclick={onCancel}>Cancel</button>
-    <button class="btn primary" onclick={onSave}>Save</button>
+    <button class="btn primary" disabled={pattern.phases.length === 0 || !pattern.name.trim()}
+            onclick={onSave}>Save</button>
   </div>
 </div>
 
@@ -157,7 +178,13 @@
   .row label{color:var(--muted);font-size:12.5px}
   .ctl{height:30px;border-radius:7px;background:var(--field);border:1px solid var(--line);
     color:var(--fore);padding:0 9px;font:inherit;font-size:13px}
-  .name-input{width:180px}
+  select.ctl option{background:var(--card);color:var(--fore)}
+  /* name doubles as the title */
+  .title-input{width:100%;background:transparent;border:1px solid transparent;border-radius:8px;
+    color:var(--fore);font:inherit;font-size:18px;font-weight:600;padding:6px 8px;outline:none}
+  .title-input:hover{border-color:var(--line)}
+  .title-input:focus{border-color:var(--accent);background:var(--field)}
+  .title-input.invalid{border-color:#e05252}
 
   .phase-row{display:flex;align-items:center;gap:8px;margin:7px 0}
   .phase-type{min-width:100px;width:100px}
@@ -188,6 +215,7 @@
   .btn{padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--field);
     color:var(--fore);cursor:pointer;font:inherit}
   .btn.primary{background:var(--accent);color:var(--accentFg);border:0;font-weight:600}
+  .btn.primary:disabled{opacity:.45;cursor:default}
   .btn.danger{background:transparent;border-color:#e05252;color:#e05252}
   .btn.danger:hover{background:#e05252;color:#fff}
   .spacer{flex:1}

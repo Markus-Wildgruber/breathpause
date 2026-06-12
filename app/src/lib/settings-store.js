@@ -11,7 +11,8 @@ function modeDefaults(overrides) {
     sizePct: 45,                // break: orb diameter as % of screen height (fullscreen, centered)
     opacity: 0.95,
     font: 'Segoe UI',
-    labelSize: 16,
+    labelSize: 16,             // phase label (big text) size
+    subSize: 13,               // pomodoro/sessions (bottom text) size
     showPhaseLabel: true,
     showPhaseCountdown: true,
     showPomodoro: true,
@@ -84,6 +85,25 @@ export const DEFAULT_SETTINGS = {
 
 export function modeKey(mode) {
   return mode === 'break' ? 'break' : 'work';
+}
+
+// Apply a pattern-editor result to a (patterns, timers) pair, returning new copies.
+// A result is either a saved pattern (append when its id is new, replace when it exists)
+// or { id, deleted: true } (drop it and re-point any work/break selection that used it).
+// Pure + returns fresh arrays so the caller can assign reactively and persist.
+export function applyPatternResult(patterns, timers, result) {
+  const out = { patterns: (patterns || []).slice(), timers: { ...timers } };
+  if (!result || !result.id) return out;
+  if (result.deleted) {
+    out.patterns = out.patterns.filter((p) => p.id !== result.id);
+    if (out.timers.workPattern === result.id) out.timers.workPattern = out.patterns[0]?.id ?? '';
+    if (out.timers.breakPattern === result.id) out.timers.breakPattern = out.patterns[0]?.id ?? '';
+    return out;
+  }
+  const idx = out.patterns.findIndex((p) => p.id === result.id);
+  if (idx >= 0) out.patterns[idx] = result;
+  else out.patterns.push(result);
+  return out;
 }
 
 // A collision-proof id for an imported skin. Date.now() alone collides when the same SVG

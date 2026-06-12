@@ -21,6 +21,9 @@
     "core:window:allow-close",
     "core:window:allow-center",
     "core:window:allow-available-monitors",
-    "opener:allow-open-url"
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    }
   ]
 }
