@@ -39,6 +39,7 @@ fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     .decorations(true)
     .resizable(false)
     .center()
+    .visible(false)   // shown by the frontend after the saved position is restored (no flash)
     .icon(icon)?
     .build()?;
   Ok(())

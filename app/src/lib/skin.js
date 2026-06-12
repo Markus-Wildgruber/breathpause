@@ -42,7 +42,7 @@ export async function loadSkin(baseUrl) {
 // ships in many color schemes without duplicating geometry.
 export function mountSkin(container, skin, opts = {}) {
   const palette = { ...(skin.manifest.palette || {}), ...(opts.palette || {}) };
-  let svgText = applyPalette(skin.svgText, palette);
+  let svgText = applyPalette(sanitizeSvg(skin.svgText), palette);
   // opts.fill recolors the whole skin by hue-shifting it from the skin's themeColor
   // anchor to the fill. Skins with no anchor (e.g. bare uploads) are shown as-is.
   if (opts.fill && skin.manifest.themeColor) {
@@ -99,6 +99,20 @@ export function applyPalette(svgText, palette = {}) {
   return out;
 }
 
+// Defense-in-depth for imported (untrusted) SVGs: this string is injected with innerHTML
+// and there's no CSP. Strip the active/exfiltration vectors — <script>, on* handlers, and
+// external/data href refs — while keeping internal "#id" refs that gradients/<use> need.
+// Not a full sanitizer (no DOM parse), but it removes the realistic vectors for hand SVGs.
+export function sanitizeSvg(svgText) {
+  return svgText
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<script[\s\S]*?\/>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\s(?:xlink:)?href\s*=\s*"(?!#)[^"]*"/gi, '')
+    .replace(/\s(?:xlink:)?href\s*=\s*'(?!#)[^']*'/gi, '');
+}
+
 // ---- recolor engine -------------------------------------------------------
 // Recolor a skin by hue-shifting it from an anchor color to a fill color. Every
 // sufficiently-saturated color in the SVG is rotated by the SAME hue+saturation
@@ -120,9 +134,17 @@ const NAMED_COLORS = {
   khaki: [240,230,140], crimson: [220,20,60], turquoise: [64,224,208], whitesmoke: [245,245,245],
 };
 
-const NAMED_KEYS = Object.keys(NAMED_COLORS).sort((a, b) => b.length - a.length).join('|');
-const COLOR_PATTERN =
-  '#[0-9a-fA-F]{6}\\b|#[0-9a-fA-F]{3}\\b|rgb\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*\\)|\\b(?:' + NAMED_KEYS + ')\\b';
+// A color token only counts when it's the VALUE of a color-bearing attribute or CSS
+// property (fill="…", stroke:…, stop-color="…"). Matching tokens anywhere in the markup
+// would rewrite unrelated text — class="red", <title>gold</title>, an id, a font name — so
+// we anchor on the property name and rewrite only the value that follows it.
+const COLOR_PROPS = 'fill|stroke|stop-color|flood-color|lighting-color|solid-color|color';
+const COLOR_TOKEN =
+  '#[0-9a-fA-F]{6}\\b|#[0-9a-fA-F]{3}\\b|rgb\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*\\)|[a-zA-Z]+';
+// Groups: 1 = property, 2 = separator (: or =, optional quote), 3 = the color token.
+function colorContextRe() {
+  return new RegExp('\\b(' + COLOR_PROPS + ')(\\s*[:=]\\s*["\\\']?)(' + COLOR_TOKEN + ')', 'gi');
+}
 
 // Parse a hex / rgb() / named color token to [r,g,b], or null if unrecognized.
 function parseColor(str) {
@@ -186,15 +208,18 @@ export function recolor(svgText, anchorHex, fillHex, tintNeutrals = false) {
   const dH = f.h - a.h, dS = f.s - a.s, dL = f.l - a.l;
   if (dH === 0 && dS === 0 && dL === 0) return svgText;   // fill == anchor: authored look
   const clamp = (v) => Math.min(1, Math.max(0, v));
-  return svgText.replace(new RegExp(COLOR_PATTERN, 'gi'), (token) => {
+  return svgText.replace(colorContextRe(), (m, prop, sep, token) => {
     const rgb = parseColor(token);
-    if (!rgb) return token;
+    if (!rgb) return m;                              // e.g. "none", "url(#g)", "currentColor"
     const c = rgbToHsl(rgb);
+    let out;
     if (c.s < GREY_CUTOFF) {
-      if (!tintNeutrals) return token;             // leave neutrals untouched
-      return hslToHex(f.h, f.s, clamp(c.l + dL));  // tint hue/sat + shift lightness
+      if (!tintNeutrals) return m;                   // leave neutrals untouched
+      out = hslToHex(f.h, f.s, clamp(c.l + dL));     // tint hue/sat + shift lightness
+    } else {
+      out = hslToHex(c.h + dH, clamp(c.s + dS), clamp(c.l + dL));
     }
-    return hslToHex(c.h + dH, clamp(c.s + dS), clamp(c.l + dL));
+    return prop + sep + out;
   });
 }
 
@@ -221,8 +246,8 @@ export function isNeutral(hex) {
 // grey-bodied mascot can anchor on its body color instead of a stray accent.
 export function scanColors(svgText, { includeNeutrals = false, limit = 8 } = {}) {
   const counts = new Map(), hslOf = new Map();
-  for (const m of svgText.matchAll(new RegExp(COLOR_PATTERN, 'gi'))) {
-    const rgb = parseColor(m[0]);
+  for (const m of svgText.matchAll(colorContextRe())) {
+    const rgb = parseColor(m[3]);
     if (!rgb) continue;
     const c = rgbToHsl(rgb);
     const hex = hslToHex(c.h, c.s, c.l);

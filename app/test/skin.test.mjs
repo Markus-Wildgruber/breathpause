@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { validateBinding, applyPalette, recolor, scanColors, isNeutral } from '../src/lib/skin.js';
+import { validateBinding, applyPalette, recolor, scanColors, isNeutral, sanitizeSvg } from '../src/lib/skin.js';
 
 const ok = { target: 'orb', property: 'scale', source: 'breath', from: 0, to: 1 };
 
@@ -97,6 +97,35 @@ test('recolor shifts multi-tone art by one delta (relationships preserved)', () 
 test('recolor is a no-op for an unrecognized anchor', () => {
   const svg = '<circle fill="#4a90c8"/>';
   assert.equal(recolor(svg, 'not-a-color', '#c84a4a'), svg);
+});
+
+test('recolor only rewrites color-property values, not lookalike text', () => {
+  const out = recolor(
+    '<rect class="red" id="gold" fill="#4a90c8"/><title>red panda</title>',
+    '#4a90c8', '#c84a4a',
+  );
+  assert.ok(out.includes('class="red"'), 'class name untouched');
+  assert.ok(out.includes('id="gold"'), 'id untouched');
+  assert.ok(out.includes('<title>red panda</title>'), 'text content untouched');
+  assert.ok(!out.includes('#4a90c8'), 'the actual fill was recolored');
+});
+
+test('recolor handles a named color used as a fill value', () => {
+  const out = recolor('<circle fill="red"/>', 'red', 'blue');
+  const m = out.match(/fill="(#[0-9a-f]{6})"/i);
+  assert.ok(m, `fill became a hex color, got ${out}`);
+  const [r, , b] = [m[1].slice(1, 3), m[1].slice(3, 5), m[1].slice(5, 7)].map(h => parseInt(h, 16));
+  assert.ok(b > r, `a blue fill should read bluish, got ${m[1]}`);
+});
+
+test('sanitizeSvg strips scripts, event handlers and external refs, keeps internal #refs', () => {
+  const dirty = `<svg onload="hack()"><script>alert(1)</script>`
+    + `<image href="https://evil.test/x.png"/><use xlink:href="#grad"/></svg>`;
+  const clean = sanitizeSvg(dirty);
+  assert.ok(!/<script/i.test(clean), 'script element removed');
+  assert.ok(!/onload/i.test(clean), 'event handler attribute removed');
+  assert.ok(!/https:/i.test(clean), 'external href removed');
+  assert.ok(clean.includes('href="#grad"'), 'internal #ref preserved');
 });
 
 test('scanColors returns saturated colors most-frequent first, skipping neutrals', () => {

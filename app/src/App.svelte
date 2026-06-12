@@ -167,7 +167,9 @@
     let breathT = 0;
 
     function frame(now) {
-      const dt = Pomodoro.limitFrameDt ? Pomodoro.limitFrameDt((now - last) / 1000) : (now - last) / 1000;
+      // Cap the per-frame delta at 1s so waking from sleep doesn't fast-forward
+      // through many work/break boundaries at once (effectively pauses during sleep).
+      const dt = Pomodoro.limitFrameDt ? Pomodoro.limitFrameDt((now - last) / 1000, 1) : (now - last) / 1000;
       last = now;
 
       const r = Pomodoro.tick(pomo, dt);
@@ -285,7 +287,7 @@
   .break-exit {
     position: fixed;
     top: 18px;
-    left: 18px;
+    right: 18px;
     width: 42px;
     height: 42px;
     border-radius: 11px;

@@ -1,0 +1,16 @@
+{
+  "name": "Cute Bear",
+  "svg": "bear-svgrepo-com.svg",
+  "themeColor": "#C38155",
+  "tintNeutrals": false,
+  "text": { "color": "#3A2C50" },
+  "bindings": [
+    { "target": "bear",       "property": "scale",   "source": "breath", "from": 1.0, "to": 1.06, "origin": [523, 518] },
+    { "target": "mouthOpen",  "property": "scale",   "source": "breath", "from": 0.0, "to": 1.0,  "origin": [578, 454] },
+    { "target": "mouthRest", "property": "opacity", "source": "breath", "from": 1.0, "to": 0.0 },
+    { "target": "lidTopL", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [530, 262] },
+    { "target": "lidBotL", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [530, 358] },
+    { "target": "lidTopR", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [601, 269] },
+    { "target": "lidBotR", "property": "scale", "source": "breath", "from": 1.0, "to": 0.0, "origin": [601, 361] }
+  ]
+}
