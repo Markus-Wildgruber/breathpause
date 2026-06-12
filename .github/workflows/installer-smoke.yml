@@ -138,15 +138,19 @@ jobs:
 
       - name: Verify the binary is universal
         run: |
-          BIN="app/src-tauri/target/universal-apple-darwin/release/bundle/macos/breathpause.app/Contents/MacOS/breathpause"
+          APP="app/src-tauri/target/universal-apple-darwin/release/bundle/macos/breathpause.app"
+          # The executable name comes from the bundle's own metadata — don't guess.
+          BIN="$APP/Contents/MacOS/$(plutil -extract CFBundleExecutable raw "$APP/Contents/Info.plist")"
+          echo "binary: $BIN"
           test -x "$BIN"
           echo "archs: $(lipo -archs "$BIN")"
           lipo -archs "$BIN" | grep -q x86_64
           lipo -archs "$BIN" | grep -q arm64
+          echo "APP_BIN=$BIN" >> "$GITHUB_ENV"
 
       - name: Launch app and verify it stays up
         run: |
-          "app/src-tauri/target/universal-apple-darwin/release/bundle/macos/breathpause.app/Contents/MacOS/breathpause" &
+          "$APP_BIN" &
           APP_PID=$!
           sleep 15
           kill -0 $APP_PID    # fails if the app crashed/exited
