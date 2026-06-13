@@ -1215,6 +1215,13 @@
               </svg>
             </button>
           </div>
+          <button
+            class="linklike report-link"
+            onclick={() =>
+              openExternal(
+                "https://github.com/Markus-Wildgruber/breathpause/issues/new",
+              )}>Report a problem</button
+          >
         </div>
       </div>
     {/if}
@@ -2076,6 +2083,12 @@
     color: var(--accent);
     cursor: pointer;
     text-decoration: underline;
+  }
+  .report-link {
+    display: block;
+    margin: 14px auto 0;
+    text-align: center;
+    font-size: 12.5px;
   }
   .about-social {
     display: flex;

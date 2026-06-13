@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="app/public/img/breathpause-256.png" alt="breathpause logo" width="110">
+<img src="app/public/img/breathpause-256.png" alt="BreathPause logo" width="110">
 
-# breathpause
+# BreathPause
 
-**An always-on-top breathing bubble that paces your focus sessions —<br>native, no Electron, no runtime dependencies.**
+**An always-on-top breathing bubble that paces your focus sessions —<br>native, no Electron, no bundled runtime.**
 
 [Install](#install) · [Features](#features) · [Development](#development) · [Releases](https://github.com/Markus-Wildgruber/breathpause/releases)
 
@@ -14,9 +14,9 @@
 
 </div>
 
-## What is breathpause
+## What is BreathPause
 
-breathpause is a native always-on-top breathing bubble for Windows and macOS. It sits in the corner of your screen and breathes quietly while you work, then takes over the screen with a frosted breathing break when the pomodoro timer runs out.
+BreathPause is a native always-on-top breathing bubble for Windows and macOS. It sits in the corner of your screen and breathes quietly while you work, then takes over the screen with a frosted breathing break when the pomodoro timer runs out.
 
 Built with **Tauri v2 + Svelte**: a small Rust backend hosts the system webview (WebView2 on Windows, WKWebView on macOS) — no Electron, no Node.js runtime, no background services. The Windows installer is around 3 MB.
 
@@ -57,7 +57,7 @@ The installer and executable are unsigned (alpha), so Windows SmartScreen may sh
 
 ### macOS
 
-**Installer:** Open `breathpause_x.y.z_universal.dmg` and drag breathpause into Applications. Runs on both Apple Silicon and Intel.
+**Installer:** Open `breathpause_x.y.z_universal.dmg` and drag BreathPause into Applications. Runs on both Apple Silicon and Intel.
 
 The app is unsigned (alpha), so Gatekeeper will refuse to open it on first launch. Either **right-click the app → Open**, then confirm in the dialog, or clear the quarantine flag from a terminal:
 
@@ -67,7 +67,7 @@ xattr -dr com.apple.quarantine /Applications/breathpause.app
 
 ## Usage
 
-1. Launch breathpause — a translucent orb appears in the top-right corner and starts breathing.
+1. Launch BreathPause — a translucent orb appears in the top-right corner and starts breathing.
 2. The bubble breathes quietly during the work segment, then switches to break mode automatically.
 3. Right-click the system tray icon to pause, open settings, or quit.
 4. Left-click the tray icon or bubble to show / hide.

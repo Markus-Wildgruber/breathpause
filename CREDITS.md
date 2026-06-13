@@ -1,6 +1,6 @@
 # Credits & third-party attributions
 
-BreathePause's own source code is MIT-licensed (see `LICENSE`). The bundled
+BreathPause's own source code is MIT-licensed (see `LICENSE`). The bundled
 artwork below keeps its **own** license — it is **not** covered by the project's
 MIT license. If you fork or redistribute, keep these attributions.
 

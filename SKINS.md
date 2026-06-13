@@ -1,4 +1,4 @@
-# Creating BreathePause skins
+# Creating BreathPause skins
 
 A skin is a folder with two files:
 
