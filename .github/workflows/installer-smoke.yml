@@ -214,6 +214,17 @@ jobs:
           }
           stop_app() { kill $APP_PID; sleep 2; }
 
+          # macOS 15 shows a screen-recording consent ("bypass the private window
+          # picker") a few screencaptures in. The TCC auth row alone doesn't satisfy it,
+          # so trigger it on the empty desktop (a stray click there is harmless) and
+          # accept it via cliclick — once Allowed it stays granted for the whole job.
+          brew list cliclick >/dev/null 2>&1 || brew install cliclick
+          for n in 1 2 3 4; do
+            screencapture -x /tmp/warmup.png || true
+            sleep 3
+            cliclick c:512,367 || true   # "Allow" button @ the runner's 1024x768 screen
+          done
+
           run_app 15
           echo "app running (pid $APP_PID)"
           shot mac-1-bubble-default
