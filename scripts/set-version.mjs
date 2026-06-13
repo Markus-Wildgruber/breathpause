@@ -13,20 +13,22 @@ if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
 }
 
 const edits = [
-  // JSON manifests: replace the first top-level "version" field.
-  { file: 'app/package.json', update: (s) => s.replace(/("version":\s*")[^"]*(")/, `$1${version}$2`) },
-  { file: 'app/src-tauri/tauri.conf.json', update: (s) => s.replace(/("version":\s*")[^"]*(")/, `$1${version}$2`) },
+  // JSON manifests: the first top-level "version" field.
+  { file: 'app/package.json', find: /("version":\s*")[^"]*(")/, repl: `$1${version}$2` },
+  { file: 'app/src-tauri/tauri.conf.json', find: /("version":\s*")[^"]*(")/, repl: `$1${version}$2` },
   // Cargo.toml: the [package] version line (anchored, so rust-version is untouched).
-  { file: 'app/src-tauri/Cargo.toml', update: (s) => s.replace(/^version = "[^"]*"/m, `version = "${version}"`) },
+  { file: 'app/src-tauri/Cargo.toml', find: /^version = "[^"]*"/m, repl: `version = "${version}"` },
 ];
 
-for (const { file, update } of edits) {
+for (const { file, find, repl } of edits) {
   const before = readFileSync(file, 'utf8');
-  const after = update(before);
-  if (after === before) {
-    console.error(`No version field updated in ${file}`);
+  // Fail only if the field is genuinely missing — an already-correct version
+  // (a no-op replacement) is fine and must not break the release.
+  if (!find.test(before)) {
+    console.error(`No version field found in ${file}`);
     process.exit(1);
   }
-  writeFileSync(file, after);
-  console.log(`${file} -> ${version}`);
+  const after = before.replace(find, repl);
+  if (after !== before) writeFileSync(file, after);
+  console.log(`${file} -> ${version}${after === before ? ' (already current)' : ''}`);
 }
