@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cute Bear — breathing demo</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(circle at 50% 35%, #1d2740, #0b0e16 70%);
+    color: #eef3ff; font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; min-height: 100%; user-select: none;
+  }
+  .stage { width: 340px; height: 340px; display: grid; place-items: center;
+           filter: drop-shadow(0 14px 22px rgba(0,0,0,.45)); }
+  .stage svg { width: 100%; height: 100%; display: block; }
+  .label { font-size: 30px; font-weight: 700; min-height: 38px; }
+  .count { font-size: 20px; opacity: .7; min-height: 26px; font-variant-numeric: tabular-nums; }
+  .controls { display: flex; gap: 12px 16px; align-items: center; flex-wrap: wrap; justify-content: center;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px; padding: 12px 16px; }
+  label { font-size: 13px; opacity: .85; display: flex; align-items: center; gap: 8px; }
+  select, button { font: inherit; color: #eef3ff; background: rgba(255,255,255,.1);
+    border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  .err { max-width: 460px; text-align: center; color: #ffb4b4; font-size: 13px; }
+  .hint { font-size: 12px; opacity: .5; max-width: 520px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="stage" id="stage"></div>
+  <div class="label" id="label"></div>
+  <div class="count" id="count"></div>
+  <div class="controls">
+    <label>Pattern <select id="pattern"></select></label>
+    <button id="play">Pause</button>
+  </div>
+  <div class="err" id="err" hidden></div>
+  <div class="hint">Drives the real <code>skin.json</code> bindings: body scales with the breath, the mouth
+    opens on the in-breath, and the eyes ease shut on the out-breath. Holds just freeze the breath value.</div>
+
+<script type="module">
+  const PATTERNS = {
+    'Box 4·4·4·4':      [['in',4],['hold',4],['out',4],['hold',4]],
+    'Coherent 5.5·5.5': [['in',5.5],['out',5.5]],
+    '4-7-8':            [['in',4],['hold',7],['out',8]],
+    'Relax 4·2·6·2':    [['in',4],['hold',2],['out',6],['hold',2]],
+  };
+  const PHASE_LABEL = { in: 'Breathe in', out: 'Breathe out', hold: 'Hold' };
+  const ease = x => x <= 0 ? 0 : x >= 1 ? 1 : (1 - Math.cos(Math.PI * x)) / 2;
+
+  function stateAt(phases, t) {
+    const total = phases.reduce((s, p) => s + p[1], 0);
+    let tt = ((t % total) + total) % total, level = 0;
+    for (const [type, sec] of phases) {
+      const to = type === 'in' ? 1 : type === 'out' ? 0 : level;
+      if (tt < sec) return { breath: level + (to - level) * ease(tt / sec), label: PHASE_LABEL[type], remaining: sec - tt };
+      tt -= sec; level = to;
+    }
+    return { breath: level, label: '', remaining: 0 };
+  }
+
+  // Faithful port of the app's mountSkin binding application.
+  function applyBindings(svg, bindings, sources) {
+    for (const b of bindings) {
+      const el = svg.getElementById(b.target); if (!el) continue;
+      const base = el.__base ?? (el.__base = el.getAttribute('transform') || '');
+      const v = b.from + (sources[b.source] ?? 0) * (b.to - b.from);
+      switch (b.property) {
+        case 'scale': { const [ox, oy] = b.origin || [0, 0];
+          el.setAttribute('transform', `${base} translate(${ox} ${oy}) scale(${v}) translate(${-ox} ${-oy})`); break; }
+        case 'translateX': el.setAttribute('transform', `${base} translate(${v} 0)`); break;
+        case 'translateY': el.setAttribute('transform', `${base} translate(0 ${v})`); break;
+        case 'r': case 'opacity': el.setAttribute(b.property, v); break;
+      }
+    }
+  }
+
+  const sel = document.getElementById('pattern');
+  for (const n of Object.keys(PATTERNS)) sel.add(new Option(n, n));
+
+  let manifest, svg;
+  try {
+    manifest = await (await fetch('skin.json')).json();
+    const txt = await (await fetch(manifest.svg)).text();
+    document.getElementById('stage').innerHTML = txt;
+    svg = document.querySelector('#stage svg');
+  } catch (e) {
+    document.getElementById('err').hidden = false;
+    document.getElementById('err').textContent =
+      'Could not load the SVG (browsers block file:// fetches). Open this via the dev server: '
+      + 'npm run dev  →  http://localhost:5173/skins/cute-bear/breathing-demo.html';
+    throw e;
+  }
+
+  let t = 0, last = performance.now(), running = true;
+  document.getElementById('play').onclick = (e) => { running = !running; e.target.textContent = running ? 'Pause' : 'Play'; };
+
+  function frame(now) {
+    const dt = (now - last) / 1000; last = now;
+    if (running) t += dt;
+    const { breath, label, remaining } = stateAt(PATTERNS[sel.value], t);
+    applyBindings(svg, manifest.bindings, { breath, time: Math.sin(t) });
+    document.getElementById('label').textContent = label;
+    document.getElementById('count').textContent = Math.max(1, Math.ceil(remaining));
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>

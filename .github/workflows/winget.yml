@@ -1,0 +1,28 @@
+name: Publish to winget
+
+# Submits each new version to the Windows Package Manager community repo
+# (microsoft/winget-pkgs) when a GitHub Release is published.
+#
+# ONE-TIME SETUP (the action only UPDATES an existing package, it can't create the
+# first one): submit the initial manifest once, e.g. on a Windows box —
+#   winget install wingetcreate
+#   wingetcreate new https://github.com/Markus-Wildgruber/breathpause/releases/download/v0.1.0/breathpause_0.1.0_x64-setup.exe
+# (answer the prompts; it opens the first PR to winget-pkgs). After that PR merges,
+# this workflow keeps every later release in sync automatically.
+#
+# REQUIRES a repo secret WINGET_TOKEN: a PAT with `public_repo` scope, used to fork
+# and open the PR against microsoft/winget-pkgs.
+on:
+  release:
+    types: [released]   # fires when a (non-draft, non-prerelease) release is published
+
+jobs:
+  winget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: MarkusWildgruber.BreathPause
+          # Match the NSIS installer asset only — not the _x64-standalone.exe.
+          installers-regex: '_x64-setup\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}

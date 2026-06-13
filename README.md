@@ -1,89 +1,104 @@
-# breathpause
+<div align="center">
 
-**An always-on-top breathing bubble that paces your focus sessions. No install, no Electron, no bloat.**
+<img src="app/public/img/breathpause-256.png" alt="BreathPause logo" width="110">
 
-A translucent bubble sits in the corner of your screen and breathes. It doubles as a pomodoro
-timer: work, then the desktop softly blurs while the bubble guides you through a breathing break,
-then back to work.
+# BreathPause
 
-No telemetry, no network calls. On Windows, it's a single PowerShell file. On macOS, it's a single
-JavaScript file run by `osascript`.
+**An always-on-top breathing bubble that paces your focus sessions.**
 
-<p align="center"><em>(demo GIF coming — see <code>tmp/reach.md</code>)</em></p>
+[Features](#features) · [Install](#install) · [Development](#development) · [Releases](https://github.com/Markus-Wildgruber/breathpause/releases)
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1f6feb)
+![Status](https://img.shields.io/badge/status-alpha-orange)
+
+</div>
+
+## What is BreathPause
+
+BreathPause is a native always-on-top breathing bubble for Windows and macOS. It sits in the corner of your screen and breathes quietly while you work, then takes over the screen with a frosted breathing break when the pomodoro timer runs out.
+
+Built with **Tauri v2 + Svelte**: a small Rust backend hosts the system webview (WebView2 on Windows, WKWebView on macOS) — no Electron, no Node.js runtime, no background services.
 
 ## Features
 
-- **Breathing + Pomodoro** — Classic work/break/long-break timer. During work, the bubble breathes
-  quietly in the corner. On breaks, it centers and grows to guide your breathing.
-- **Custom patterns** — Set your own breathing phases (like box breathing `4-4-4-4`, or `4-7-8`)
-  for work and break states.
-- **Native UI** — Uses the OS's native GUI toolkit (WPF on Windows, Cocoa on macOS) for real
-  desktop blurring and low resource usage.
-- **Keyboard friendly** — Global hotkeys to pause/resume, skip intervals, or open settings.
-- **Zero install** — The app is literally one script. No Node, Python, or heavy browsers required.
-- **Private** — Settings are saved locally as JSON. No network calls.
+- **Breathing + pomodoro** — work / break / long-break cycle; the bubble breathes quietly in the corner during work, then guides your breathing on breaks.
+- **Custom breathing patterns** — build your own from inhale / exhale / hold phases with per-second timing (supports decimals like 5.5 s). Separate patterns for work and break.
+- **Configurable timers** — default 25-minute work, 5-minute break, 15-minute long break with configurable long-break interval.
+- **Frosted break overlay** — the break takes over the screen with a blurred snapshot of your desktop; press Esc to leave early.
+- **Skin system** — swap the bubble appearance with bundled skins (orb, sleepy seal, cute bear, sweet jelly) or import your own as an SVG or zipped folder, recolored to taste.
+- **Appearance per mode** — separate size, opacity, position, colors, and font for work and break modes.
+- **Global hotkeys** — system-wide shortcuts for start/stop, pause/resume, skip, open settings, and show/hide; customizable by pressing the keys.
+- **Start on boot** — optional autostart at login.
+- **System tray** — pause, open settings, or quit from the tray icon. Hiding the bubble pauses the session.
+- **Chime on transitions** — optional audio cue when work/break segments switch.
+- **Local-first** — settings live in localStorage; no telemetry, no network calls.
 
-## Install & run
+## Platform Status
 
-> ⚠️ **Status:** Windows is in alpha (verified on a real machine). macOS is written but untested on
-> real hardware — testers welcome.
+| Platform | Status | Notes |
+|---|---|---|
+| **Windows** 10 / 11 | Working — alpha | Requires WebView2 (pre-installed on Windows 11; auto-bootstrapped on Windows 10 by the installer). |
+| **macOS** | Built — CI-tested | Universal (Apple Silicon + Intel) `.dmg`; launch, rendering and settings are verified on CI runners. Unsigned, and not yet verified on physical hardware. |
 
-### Windows (PowerShell 5.1+)
+## Install
 
-```powershell
-winget install breathpause
+Download the latest release from [GitHub Releases](https://github.com/Markus-Wildgruber/breathpause/releases).
+
+### Windows
+
+**Installer:** Run `breathpause_x.y.z_x64-setup.exe` — installs per-user, no admin rights needed.
+
+**Standalone:** Download `breathpause_x.y.z_x64-standalone.exe`, drop it anywhere, and run it directly — no installation required.
+
+The installer and executable are unsigned (alpha), so Windows SmartScreen may show an "unknown publisher" prompt. Click **More info → Run anyway** to proceed.
+
+### macOS
+
+**Installer:** Open `breathpause_x.y.z_universal.dmg` and drag BreathPause into Applications. Runs on both Apple Silicon and Intel.
+
+The app is unsigned (alpha), so Gatekeeper will refuse to open it on first launch. Either **right-click the app → Open**, then confirm in the dialog, or clear the quarantine flag from a terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/breathpause.app
 ```
 
-Or download `breathpause.ps1` from the
-[latest release](https://github.com/Markus-Wildgruber/breathpause/releases/latest) and run:
+## Usage
 
-```powershell
-powershell -ExecutionPolicy Bypass -File breathpause.ps1
-```
-
-(If Windows SmartScreen blocks it, right-click the file → **Properties → Unblock**.)
-
-### macOS (macOS 10.10+)
-
-Download `breathpause.js` from the
-[latest release](https://github.com/Markus-Wildgruber/breathpause/releases/latest) and run:
-
-```bash
-osascript -l JavaScript breathpause.js
-```
-
-(Global hotkeys require granting **Accessibility** permission.)
-
-## Security & trust
-
-Because the app ships as a single, un-obfuscated script, you can open it in a text editor and read
-exactly what it does before running it.
-
-Every release is built by GitHub Actions, carries a signed [SLSA attestation](https://slsa.dev), and
-is scanned by VirusTotal — links are in the release notes. The Windows MSI is unsigned, so you may
-see an "unknown publisher" prompt; the checks above are how you verify the file instead.
+1. Launch BreathPause — a translucent orb appears in the top-right corner and starts breathing.
+2. The bubble breathes quietly during the work segment, then switches to break mode automatically.
+3. Right-click the system tray icon to pause, open settings, or quit.
+4. Left-click the tray icon or bubble to show / hide.
+5. Open **Settings** from the tray to adjust appearance, patterns, timers, skins, and behavior (hotkeys, start-on-boot, chime).
+6. All settings take effect when you click **Save**.
 
 ## Development
 
-The codebase splits into **core** logic (a pure, unit-tested engine) and **shell** (the OS-specific
-GUI). The build scripts concatenate them into the single distributed file.
+Requirements: [Rust](https://rustup.rs) + [Node.js LTS](https://nodejs.org).
 
 ```bash
-# Windows tests & build (outputs dist/breathpause.ps1)
-pwsh -NoProfile -File run-tests.ps1
-pwsh -NoProfile -File build/build-win.ps1
+cd app
+npm install
 
-# macOS tests & build (outputs dist/breathpause.js)
-./run-tests.sh
-./build/build-macos.sh
+# Run core logic tests
+npm test
+
+# Dev server in the browser (no Tauri window)
+npm run dev
+
+# Dev with live Tauri window
+npx tauri dev
+
+# Production Windows build (cross-compile from Linux/macOS via cargo-xwin)
+cargo install cargo-xwin
+npx tauri build --target x86_64-pc-windows-msvc --runner cargo-xwin
 ```
 
-## Configuration
+CI runs `npm test` and `npm run build` on every push.
 
-Settings and a local event log (`events.log`) are stored in the standard app-data folders:
+## Contributing
 
-- **Windows:** `%APPDATA%\breathpause\`
-- **macOS:** `~/Library/Application Support/breathpause/`
+Bug reports, breathing-pattern ideas, and skin designs are welcome — open an issue or a PR.
 
 ## License
 

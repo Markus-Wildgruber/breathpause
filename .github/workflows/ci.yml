@@ -1,0 +1,33 @@
+name: CI
+
+# Tests + frontend build for the Tauri app on every push / PR.
+# (Installer builds for Windows + macOS happen in release.yml, triggered by v* tags.)
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch cancels the older, still-running job.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: core tests + frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Core tests (node:test)
+        run: npm test
+      - name: Frontend build (vite)
+        run: npm run build

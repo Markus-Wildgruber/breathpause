@@ -1,0 +1,274 @@
+name: Installer smoke test
+
+# Windows: builds the NSIS installer on a real runner, installs it silently,
+# launches the installed app, then uninstalls — catching packaging problems
+# (missing WebView2 bootstrap, wrong install dir, broken uninstall) that the
+# cross-compiled standalone exe can't show.
+# macOS: builds the universal .app + .dmg like the release does, verifies both
+# architectures are present, launches the app, and mount-checks the dmg.
+# Runs on manual dispatch, or automatically when this file changes.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/installer-smoke.yml'
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build NSIS installer
+        working-directory: app
+        run: npx tauri build --bundles nsis
+
+      - name: Install silently
+        run: |
+          $setup = Get-ChildItem app/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Write-Host "Installing $($setup.Name)"
+          $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          # ::notice/::error annotations are readable via the public checks API,
+          # so failures can be diagnosed without log access.
+          Write-Host "::notice::installer=$($setup.Name) exitCode=$($proc.ExitCode)"
+          Start-Sleep -Seconds 5
+          # The uninstall registry entry is the authoritative source for where the
+          # installer actually put things — no guessing at NSIS directory conventions.
+          $hives = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+                     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+                     'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')
+          $reg = $hives | ForEach-Object { Get-ChildItem $_ -ErrorAction SilentlyContinue } |
+            ForEach-Object { Get-ItemProperty $_.PSPath } |
+            Where-Object { "$($_.DisplayName)" -like '*breathpause*' } | Select-Object -First 1
+          if (!$reg) {
+            $entries = ($hives | ForEach-Object { Get-ChildItem $_ -ErrorAction SilentlyContinue } |
+              ForEach-Object { (Get-ItemProperty $_.PSPath).DisplayName } | Where-Object { $_ } |
+              Select-Object -First 30) -join '; '
+            $found = (Get-ChildItem $env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)} -Recurse -Filter 'breathpause*.exe' -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName -First 5) -join '; '
+            Write-Host "::error::no uninstall entry. exitCode=$($proc.ExitCode) exeSearch=[$found] uninstallEntries=[$entries]"
+            exit 1
+          }
+          Write-Host "::notice::DisplayName=$($reg.DisplayName) InstallLocation=$($reg.InstallLocation) UninstallString=$($reg.UninstallString)"
+          # Tauri's NSIS writes these values with literal surrounding quotes.
+          $uninst = ($reg.UninstallString -replace '"','').Trim()
+          $dir = ($reg.InstallLocation -replace '"','').Trim()
+          if (!$dir) { $dir = Split-Path $uninst }
+          $exe = Get-ChildItem -Path $dir -Filter '*.exe' |
+            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (!$exe) {
+            Write-Host "::error::no app exe in $dir — contents: [$((Get-ChildItem $dir -ErrorAction SilentlyContinue).Name -join '; ')]"
+            exit 1
+          }
+          Write-Host "Installed OK: $($exe.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_EXE=$($exe.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_DIR=$dir"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_UNINSTALL=$uninst"
+
+      - name: Launch installed app and verify it stays up
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          function Shot($file) {
+            $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$env:GITHUB_WORKSPACE\$file.png")
+            $g.Dispose(); $bmp.Dispose()
+            Write-Host "shot: $file.png"
+          }
+          $name = [System.IO.Path]::GetFileNameWithoutExtension($env:APP_EXE)
+
+          Start-Process $env:APP_EXE
+          Start-Sleep -Seconds 15
+          $p = Get-Process $name -ErrorAction SilentlyContinue
+          if (!$p) { throw "app exited within 15s of launch" }
+          Write-Host "App running (pid $($p.Id))"
+          Shot 'win-1-bubble'
+          # The app's own global hotkey opens settings — synthetic input triggers
+          # OS-registered hotkeys, so this verifies registration on a clean machine.
+          [System.Windows.Forms.SendKeys]::SendWait('^%+o')
+          Start-Sleep -Seconds 6
+          Shot 'win-2-settings-via-hotkey'
+          Stop-Process -Name $name -Force
+          Start-Sleep -Seconds 2
+
+          # Tour every settings pane deterministically via launch args.
+          $i = 3
+          foreach ($pane in @('appearance','patterns','timers','skins','behavior','about')) {
+            Start-Process $env:APP_EXE -ArgumentList '--settings','--pane',$pane
+            Start-Sleep -Seconds 8
+            Shot "win-$i-pane-$pane"
+            Stop-Process -Name $name -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            $i++
+          }
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshots
+          path: win-*.png
+          if-no-files-found: ignore
+
+      - name: Uninstall silently
+        run: |
+          Start-Process $env:APP_UNINSTALL -ArgumentList '/S' -Wait
+          # The NSIS uninstaller respawns from %TEMP% and returns early — give it time.
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $env:APP_EXE) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 3
+          }
+          if (Test-Path $env:APP_EXE) { throw "exe still present after uninstall" }
+          Write-Host "Uninstalled OK"
+
+  smoke-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build universal app + dmg (same as release)
+        working-directory: app
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Verify the binary is universal
+        run: |
+          APP="app/src-tauri/target/universal-apple-darwin/release/bundle/macos/breathpause.app"
+          # The executable name comes from the bundle's own metadata — don't guess.
+          BIN="$APP/Contents/MacOS/$(plutil -extract CFBundleExecutable raw "$APP/Contents/Info.plist")"
+          echo "binary: $BIN"
+          test -x "$BIN"
+          echo "archs: $(lipo -archs "$BIN")"
+          lipo -archs "$BIN" | grep -q x86_64
+          lipo -archs "$BIN" | grep -q arm64
+          echo "APP_BIN=$BIN" >> "$GITHUB_ENV"
+
+      - name: Pre-authorize screen recording (best effort)
+        run: |
+          # macOS 15 prompts for screen-recording consent on every `screencapture`
+          # (attributed to the shell, hence the "bash" dialog). Pre-insert an allow
+          # grant into the system TCC db so captures run unattended and the prompt
+          # stays out of the images. Best effort: if SIP blocks the write the captures
+          # still succeed, just with the dialog overlaid.
+          DB="/Library/Application Support/com.apple.TCC/TCC.db"
+          for client in /usr/sbin/screencapture /bin/bash; do
+            if sudo sqlite3 "$DB" \
+              "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version) VALUES ('kTCCServiceScreenCapture','$client',1,2,4,1);" 2>&1; then
+              echo "granted screen recording to $client"
+            else
+              echo "could not grant to $client (SIP-protected db?)"
+            fi
+          done
+          sudo killall tccd 2>/dev/null || true
+          sleep 3
+
+      - name: Launch app and verify it stays up
+        run: |
+          shot() { screencapture -x "$1.png" && echo "shot: $1.png"; }
+          run_app() {  # run_app <seconds> [args...]
+            local secs=$1; shift
+            "$APP_BIN" "$@" & APP_PID=$!
+            sleep "$secs"
+            kill -0 $APP_PID    # fails if the app crashed/exited
+          }
+          stop_app() { kill $APP_PID; sleep 2; }
+
+          # macOS 15 shows a screen-recording consent ("bypass the private window
+          # picker") a few screencaptures in. The TCC auth row alone doesn't satisfy it,
+          # so trigger it on the empty desktop (a stray click there is harmless) and
+          # accept it via cliclick — once Allowed it stays granted for the whole job.
+          brew list cliclick >/dev/null 2>&1 || brew install cliclick
+          for n in 1 2 3 4; do
+            screencapture -x /tmp/warmup.png || true
+            sleep 3
+            cliclick c:512,367 || true   # "Allow" button @ the runner's 1024x768 screen
+          done
+
+          run_app 15
+          echo "app running (pid $APP_PID)"
+          shot mac-1-bubble-default
+          stop_app
+
+          # Change settings via the --apply-settings hook: the bubble should show
+          # the bear skin immediately...
+          run_app 10 --apply-settings '{"appearance":{"work":{"skin":"cute-bear","sizePx":300}}}'
+          shot mac-2-bubble-bear-applied
+          stop_app
+
+          # ...and still show it on a plain relaunch (persistence).
+          run_app 10
+          shot mac-3-bubble-bear-persisted
+          stop_app
+
+          # Robustness: with macOS "Reduce transparency" (Accessibility) enabled,
+          # confirm the bubble still renders for users who run with it on.
+          defaults write com.apple.universalaccess reduceTransparency -int 1
+          run_app 10
+          shot mac-3b-reduce-transparency
+          stop_app
+          defaults write com.apple.universalaccess reduceTransparency -int 0
+
+          # Tour every settings pane via launch args.
+          i=4
+          for pane in appearance patterns timers skins behavior about; do
+            run_app 10 --settings --pane "$pane"
+            shot "mac-$i-pane-$pane"
+            stop_app
+            i=$((i+1))
+          done
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-screenshots
+          path: mac-*.png
+          if-no-files-found: ignore
+
+      - name: Mount dmg and check contents
+        run: |
+          DMG=$(ls app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          echo "dmg: $DMG"
+          hdiutil attach "$DMG" -nobrowse -mountpoint /tmp/bp-dmg
+          test -d /tmp/bp-dmg/breathpause.app
+          hdiutil detach /tmp/bp-dmg

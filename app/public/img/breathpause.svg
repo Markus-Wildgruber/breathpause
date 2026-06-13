@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="breathpause">
+  <defs>
+    <radialGradient id="halo" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#4FC3F7" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#4FC3F7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ringG" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9FE0FB"/>
+      <stop offset="1" stop-color="#0288D1"/>
+    </linearGradient>
+    <linearGradient id="barG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#CFF0FF"/>
+      <stop offset="1" stop-color="#4FC3F7"/>
+    </linearGradient>
+    <radialGradient id="dotGlow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#EAF9FF"/>
+      <stop offset=".4" stop-color="#9FE0FB" stop-opacity=".7"/>
+      <stop offset="1" stop-color="#9FE0FB" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="50" cy="50" r="48" fill="url(#halo)"/>
+  <circle cx="50" cy="50" r="33" fill="none" stroke="url(#ringG)" stroke-width="5"/>
+  <circle cx="50" cy="17" r="8" fill="url(#dotGlow)"/>
+  <circle cx="50" cy="17" r="3.6" fill="#FFFFFF"/>
+  <rect x="40" y="37" width="6.5" height="26" rx="3.25" fill="url(#barG)"/>
+  <rect x="53.5" y="37" width="6.5" height="26" rx="3.25" fill="url(#barG)"/>
+</svg>
