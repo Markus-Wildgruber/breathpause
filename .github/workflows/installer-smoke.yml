@@ -184,6 +184,25 @@ jobs:
           lipo -archs "$BIN" | grep -q arm64
           echo "APP_BIN=$BIN" >> "$GITHUB_ENV"
 
+      - name: Pre-authorize screen recording (best effort)
+        run: |
+          # macOS 15 prompts for screen-recording consent on every `screencapture`
+          # (attributed to the shell, hence the "bash" dialog). Pre-insert an allow
+          # grant into the system TCC db so captures run unattended and the prompt
+          # stays out of the images. Best effort: if SIP blocks the write the captures
+          # still succeed, just with the dialog overlaid.
+          DB="/Library/Application Support/com.apple.TCC/TCC.db"
+          for client in /usr/sbin/screencapture /bin/bash; do
+            if sudo sqlite3 "$DB" \
+              "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version) VALUES ('kTCCServiceScreenCapture','$client',1,2,4,1);" 2>&1; then
+              echo "granted screen recording to $client"
+            else
+              echo "could not grant to $client (SIP-protected db?)"
+            fi
+          done
+          sudo killall tccd 2>/dev/null || true
+          sleep 3
+
       - name: Launch app and verify it stays up
         run: |
           shot() { screencapture -x "$1.png" && echo "shot: $1.png"; }
@@ -210,6 +229,14 @@ jobs:
           run_app 10
           shot mac-3-bubble-bear-persisted
           stop_app
+
+          # Robustness: with macOS "Reduce transparency" (Accessibility) enabled,
+          # confirm the bubble still renders for users who run with it on.
+          defaults write com.apple.universalaccess reduceTransparency -int 1
+          run_app 10
+          shot mac-3b-reduce-transparency
+          stop_app
+          defaults write com.apple.universalaccess reduceTransparency -int 0
 
           # Tour every settings pane via launch args.
           i=4
