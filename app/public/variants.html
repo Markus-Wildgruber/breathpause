@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sleepy seal — 10 palettes</title>
+<style>
+  html, body {
+    margin: 0; min-height: 100%;
+    background: radial-gradient(ellipse at 50% 0%, #1d2b3e 0%, #0d1420 75%);
+    font-family: "Segoe UI", system-ui, sans-serif; color: #cfe3f5;
+  }
+  h1 { text-align: center; font-weight: 300; letter-spacing: 3px; margin: 22px 0 16px; font-size: 20px; }
+  #grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px; max-width: 1500px; margin: 0 auto 40px; padding: 0 16px;
+  }
+  .card {
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 16px; padding: 8px; text-align: center;
+  }
+  .stage { width: 100%; aspect-ratio: 895/755; }
+  .name { font-size: 13px; letter-spacing: 1px; opacity: 0.85; margin: 4px 0 6px; }
+</style>
+</head>
+<body>
+<h1>sleepy seal — pick a palette</h1>
+<div id="grid"></div>
+<script type="module">
+import Breathing from '/src/core/breathing.js';
+import { loadSkin, mountSkin } from '/src/lib/skin.js';
+
+// base art colors: fur #d3d7cf · mid #888a85 · outline #555753 · chest #ffffff
+// light #eeeeec · nose #2e3436 · bubble #bfe3ff/#7fb8e8
+const PALETTES = [
+  { name: '1 · original grey', map: {} },
+  { name: '2 · arctic white', map: {
+    '#d3d7cf': '#f4f4ef', '#888a85': '#cdd6de', '#555753': '#4a4a55', '#eeeeec': '#ffffff' } },
+  { name: '3 · sticker navy (reference style)', map: {
+    '#d3d7cf': '#c6ccdd', '#888a85': '#a8b0c8', '#555753': '#272c55', '#eeeeec': '#e8ecf5' } },
+  { name: '4 · pastel blue', map: {
+    '#d3d7cf': '#cfe4ff', '#888a85': '#a8c8ef', '#555753': '#3a4a6b', '#eeeeec': '#eaf3ff' } },
+  { name: '5 · sakura pink', map: {
+    '#d3d7cf': '#ffd9e2', '#888a85': '#f0b4c4', '#555753': '#5e3a4a', '#eeeeec': '#fff0f4',
+    '#ffffff': '#fff8fa' } },
+  { name: '6 · lavender', map: {
+    '#d3d7cf': '#e8e6f5', '#888a85': '#c4bce4', '#555753': '#4a4466', '#eeeeec': '#f4f2fb' } },
+  { name: '7 · mint', map: {
+    '#d3d7cf': '#d8f0e8', '#888a85': '#a5d8c5', '#555753': '#3a5c50', '#eeeeec': '#ecf8f3' } },
+  { name: '8 · peach cream', map: {
+    '#d3d7cf': '#ffe9d6', '#888a85': '#eec5a0', '#555753': '#6b4a3a', '#eeeeec': '#fff5ea' } },
+  { name: '9 · mono ink', map: {
+    '#d3d7cf': '#ffffff', '#888a85': '#dcdcdc', '#555753': '#2a2a2a', '#eeeeec': '#f4f4f4' } },
+  { name: '10 · night mode', map: {
+    '#d3d7cf': '#5a6a8a', '#888a85': '#44527a', '#555753': '#222840', '#eeeeec': '#8a9ab8',
+    '#ffffff': '#9fb0cc', '#bfe3ff': '#cfe8ff' } },
+];
+
+const PATTERN = { phases: [
+  { type: 'inhale', seconds: 5.5, label: 'in' },
+  { type: 'exhale', seconds: 5.5, label: 'out' },
+]};
+
+const skin = await loadSkin('/skins/sleepy-seal');
+const grid = document.getElementById('grid');
+const mounts = [];
+for (const p of PALETTES) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `<div class="stage"></div><div class="name">${p.name}</div>`;
+  grid.appendChild(card);
+  mounts.push(mountSkin(card.querySelector('.stage'), skin, { palette: p.map }));
+}
+
+const start = performance.now();
+function frame(now) {
+  const t = (now - start) / 1000;
+  const breath = Breathing.sizeAt(PATTERN, t);
+  for (const m of mounts) m.apply({ breath, time: Math.sin(t) });
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

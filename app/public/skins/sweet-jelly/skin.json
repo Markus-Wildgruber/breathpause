@@ -1,0 +1,21 @@
+{
+  "name": "Sweet Jelly",
+  "svg": "jellyfish-svgrepo-com.svg",
+  "themeColor": "#A7E4F2",
+  "tintNeutrals": false,
+  "text": { "color": "#524F75" },
+  "bindings": [
+    { "target": "jelly", "property": "scale", "source": "breath", "from": 1.0, "to": 1.03, "origin": [512, 540] },
+    { "target": "bell",  "property": "scale", "source": "breath", "from": 1.0, "to": 1.06, "origin": [512, 590] },
+    { "target": "halo",  "property": "translateY", "source": "breath", "from": 0, "to": -14 },
+    { "target": "lidTopL", "property": "translateY", "source": "breath", "from": 0, "to": -42 },
+    { "target": "lidBotL", "property": "translateY", "source": "breath", "from": 0, "to": 42 },
+    { "target": "lidTopR", "property": "translateY", "source": "breath", "from": 0, "to": -55 },
+    { "target": "lidBotR", "property": "translateY", "source": "breath", "from": 0, "to": 55 },
+    { "target": "mouthOpen", "property": "scale", "source": "breath", "from": 0, "to": 1, "origin": [421, 499] },
+    { "target": "tentL1", "property": "translateX", "source": "time", "from": 0, "to": 5 },
+    { "target": "tentR1", "property": "translateX", "source": "time", "from": 0, "to": -4 },
+    { "target": "tentL2", "property": "translateX", "source": "time", "from": 0, "to": -3 },
+    { "target": "tentR2", "property": "translateX", "source": "time", "from": 0, "to": 4 }
+  ]
+}

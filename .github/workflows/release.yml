@@ -1,0 +1,90 @@
+name: Release
+
+# Builds signed-ready installers and attaches them to a GitHub Release.
+# Triggered by pushing a version tag, e.g.:  git tag v0.1.0 && git push origin v0.1.0
+# The tag is the single source of truth for the version (see scripts/set-version.mjs).
+on:
+  push:
+    tags:
+      - 'v*'
+
+# tauri-action needs write access to create the release and upload assets.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: '--bundles nsis'
+          - platform: macos-latest
+            # Universal binary (Apple Silicon + Intel) as a single .dmg + .app.
+            args: '--target universal-apple-darwin --bundles app,dmg'
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Sync version to ${{ steps.version.outputs.version }}
+        shell: bash
+        run: node scripts/set-version.mjs "${{ steps.version.outputs.version }}"
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- Signing (unset for now → unsigned builds) ---
+          # Windows (Azure Trusted Signing or a .pfx) and macOS (Developer ID +
+          # notarization) secrets get added here later. Until then, installers
+          # work but trigger SmartScreen / Gatekeeper warnings.
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: 'breathpause ${{ steps.version.outputs.version }}'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # tauri-action only uploads the installer bundle; also attach the raw exe as a
+      # no-install "standalone" download (the README's Standalone option). Self-contained
+      # (frontend embedded via custom-protocol); still needs WebView2 on the system.
+      - name: Attach standalone Windows exe
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          raw=$(ls app/src-tauri/target/release/*.exe | head -1)
+          out="breathpause_${{ steps.version.outputs.version }}_x64-standalone.exe"
+          cp "$raw" "$out"
+          gh release upload "${{ github.ref_name }}" "$out" --clobber
