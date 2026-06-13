@@ -46,7 +46,9 @@ Download the latest release from [GitHub Releases](https://github.com/Markus-Wil
 
 **Installer:** Run `breathpause_x.y.z_x64-setup.exe` — installs per-user, no admin rights needed.
 
-**Standalone:** Copy `breathpause.exe` anywhere and run it directly — no installation required.
+**Standalone:** Download `breathpause_x.y.z_x64-standalone.exe`, drop it anywhere, and run it directly — no installation required.
+
+**winget:** `winget install MarkusWildgruber.BreathPause` (once published to the community repo).
 
 The installer and executable are unsigned (alpha), so Windows SmartScreen may show an "unknown publisher" prompt. Click **More info → Run anyway** to proceed.
 

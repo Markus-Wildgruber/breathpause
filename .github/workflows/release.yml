@@ -74,3 +74,17 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # tauri-action only uploads the installer bundle; also attach the raw exe as a
+      # no-install "standalone" download (the README's Standalone option). Self-contained
+      # (frontend embedded via custom-protocol); still needs WebView2 on the system.
+      - name: Attach standalone Windows exe
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          raw=$(ls app/src-tauri/target/release/*.exe | head -1)
+          out="breathpause_${{ steps.version.outputs.version }}_x64-standalone.exe"
+          cp "$raw" "$out"
+          gh release upload "${{ github.ref_name }}" "$out" --clobber
