@@ -4,9 +4,9 @@
 
 # BreathPause
 
-**An always-on-top breathing bubble that paces your focus sessions —<br>native, no Electron, no bundled runtime.**
+**An always-on-top breathing bubble that paces your focus sessions.**
 
-[Install](#install) · [Features](#features) · [Development](#development) · [Releases](https://github.com/Markus-Wildgruber/breathpause/releases)
+[Features](#features) · [Install](#install) · [Development](#development) · [Releases](https://github.com/Markus-Wildgruber/breathpause/releases)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1f6feb)
@@ -18,7 +18,7 @@
 
 BreathPause is a native always-on-top breathing bubble for Windows and macOS. It sits in the corner of your screen and breathes quietly while you work, then takes over the screen with a frosted breathing break when the pomodoro timer runs out.
 
-Built with **Tauri v2 + Svelte**: a small Rust backend hosts the system webview (WebView2 on Windows, WKWebView on macOS) — no Electron, no Node.js runtime, no background services. The Windows installer is around 3 MB.
+Built with **Tauri v2 + Svelte**: a small Rust backend hosts the system webview (WebView2 on Windows, WKWebView on macOS) — no Electron, no Node.js runtime, no background services.
 
 ## Features
 
@@ -50,8 +50,6 @@ Download the latest release from [GitHub Releases](https://github.com/Markus-Wil
 **Installer:** Run `breathpause_x.y.z_x64-setup.exe` — installs per-user, no admin rights needed.
 
 **Standalone:** Download `breathpause_x.y.z_x64-standalone.exe`, drop it anywhere, and run it directly — no installation required.
-
-**winget:** `winget install MarkusWildgruber.BreathPause` (once published to the community repo).
 
 The installer and executable are unsigned (alpha), so Windows SmartScreen may show an "unknown publisher" prompt. Click **More info → Run anyway** to proceed.
 
