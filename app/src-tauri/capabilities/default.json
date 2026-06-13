@@ -33,7 +33,12 @@
     "autostart:allow-is-enabled",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+      "allow": [
+        { "url": "https://github.com/*" },
+        { "url": "https://www.instagram.com/*" },
+        { "url": "https://www.svgrepo.com/*" },
+        { "url": "https://openclipart.org/*" }
+      ]
     }
   ]
 }

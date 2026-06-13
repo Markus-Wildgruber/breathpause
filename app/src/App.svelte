@@ -230,16 +230,15 @@
       // settings before first paint; --settings opens the settings window.
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const argv = await invoke('launch_args');
-        const ai = argv.indexOf('--apply-settings');
-        if (ai >= 0 && argv[ai + 1]) {
-          saveSettings(mergePatch(loadSettings(), JSON.parse(argv[ai + 1])));
+        const opts = await invoke('launch_options');
+        if (opts.apply_settings) {
+          saveSettings(mergePatch(loadSettings(), JSON.parse(opts.apply_settings)));
           settings = loadSettings();
           pomo = Pomodoro.applyConfig(pomo, settings.timers);
         }
-        if (argv.includes('--settings')) emit('open-settings');
+        if (opts.open_settings) emit('open-settings');
       } catch (e) {
-        console.warn('launch args:', e);
+        console.warn('launch options:', e);
       }
 
       // Start-on-boot: mirror the checkbox into the OS autostart entry.

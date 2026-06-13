@@ -121,12 +121,15 @@ test('recolor handles a named color used as a fill value', () => {
   assert.ok(b > r, `a blue fill should read bluish, got ${m[1]}`);
 });
 
-test('sanitizeSvg strips scripts, event handlers and external refs, keeps internal #refs', () => {
+test('sanitizeSvg strips scripts, handlers, foreignObject and external refs, keeps internal #refs', () => {
   const dirty = `<svg onload="hack()"><script>alert(1)</script>`
+    + `<foreignObject><iframe src="https://evil.test"></iframe></foreignObject>`
     + `<image href="https://evil.test/x.png"/><use xlink:href="#grad"/></svg>`;
   const clean = sanitizeSvg(dirty);
   assert.ok(!/<script/i.test(clean), 'script element removed');
   assert.ok(!/onload/i.test(clean), 'event handler attribute removed');
+  assert.ok(!/<foreignObject/i.test(clean), 'foreignObject removed');
+  assert.ok(!/<iframe/i.test(clean), 'smuggled iframe removed with its foreignObject');
   assert.ok(!/https:/i.test(clean), 'external href removed');
   assert.ok(clean.includes('href="#grad"'), 'internal #ref preserved');
 });

@@ -75,10 +75,12 @@ fn open_settings(app: &AppHandle) {
 fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
   let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/favicon.ico"))?;
   // `--pane <id>` (CI smoke tests / deep links) opens settings on a specific pane.
+  // Validate against the known panes so an arbitrary value can't be spliced into the URL.
+  const PANES: [&str; 6] = ["appearance", "patterns", "timers", "skins", "behavior", "about"];
   let args: Vec<String> = std::env::args().collect();
   let url = match args.iter().position(|a| a == "--pane").and_then(|i| args.get(i + 1)) {
-    Some(p) => format!("settings.html?pane={p}"),
-    None => "settings.html".into(),
+    Some(p) if PANES.contains(&p.as_str()) => format!("settings.html?pane={p}"),
+    _ => "settings.html".into(),
   };
   WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(url.into()))
     .title("BreathPause")
@@ -92,10 +94,25 @@ fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
   Ok(())
 }
 
-// The process arguments, for frontend launch hooks (--settings, --apply-settings).
+// Parsed launch hooks for the frontend. Returns only the recognized options rather
+// than exposing the raw argv to the webview.
+#[derive(serde::Serialize)]
+struct LaunchOptions {
+  apply_settings: Option<String>,
+  open_settings: bool,
+}
+
 #[tauri::command]
-fn launch_args() -> Vec<String> {
-  std::env::args().collect()
+fn launch_options() -> LaunchOptions {
+  let args: Vec<String> = std::env::args().collect();
+  LaunchOptions {
+    apply_settings: args
+      .iter()
+      .position(|a| a == "--apply-settings")
+      .and_then(|i| args.get(i + 1))
+      .cloned(),
+    open_settings: args.iter().any(|a| a == "--settings"),
+  }
 }
 
 // Screenshot of the monitor containing the (physical, global) point — downscaled and
@@ -153,7 +170,7 @@ fn open_pattern_editor(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![capture_monitor, launch_args])
+    .invoke_handler(tauri::generate_handler![capture_monitor, launch_options])
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_autostart::init(

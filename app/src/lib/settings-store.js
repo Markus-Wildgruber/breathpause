@@ -121,6 +121,7 @@ export function newSkinId() {
 // (numbers, strings, arrays) replaces. Used by the --apply-settings launch hook.
 export function mergePatch(base, patch) {
   for (const [k, v] of Object.entries(patch || {})) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;  // no prototype pollution
     if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object') {
       mergePatch(base[k], v);
     } else {

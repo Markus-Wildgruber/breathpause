@@ -101,14 +101,16 @@ export function applyPalette(svgText, palette = {}) {
   return out;
 }
 
-// Defense-in-depth for imported (untrusted) SVGs: this string is injected with innerHTML
-// and there's no CSP. Strip the active/exfiltration vectors — <script>, on* handlers, and
-// external/data href refs — while keeping internal "#id" refs that gradients/<use> need.
-// Not a full sanitizer (no DOM parse), but it removes the realistic vectors for hand SVGs.
+// Defense-in-depth for imported (untrusted) SVGs: this string is injected with innerHTML.
+// The strict CSP (script-src 'self') is the real guarantee that nothing here executes;
+// this strips the active/exfiltration vectors — <script>, <foreignObject> (smuggled HTML),
+// on* handlers, and external/data href refs — while keeping internal "#id" refs that
+// gradients/<use> need. Not a full sanitizer (no DOM parse), so it's belt-and-suspenders.
 export function sanitizeSvg(svgText) {
   return svgText
     .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
     .replace(/<script[\s\S]*?\/>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, '')
     .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
     .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
     .replace(/\s(?:xlink:)?href\s*=\s*"(?!#)[^"]*"/gi, '')
