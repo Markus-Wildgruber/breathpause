@@ -145,6 +145,35 @@ async fn capture_monitor(x: i32, y: i32) -> Result<tauri::ipc::Response, String>
   }
 }
 
+// The session's own lock flag. (Checking whether the input desktop is reachable misses
+// the first seconds of a lock on Windows 11: the lock-screen curtain is on the user desktop.)
+#[cfg(windows)]
+fn screen_locked() -> bool {
+  use windows_sys::Win32::System::RemoteDesktop::{
+    WTSFreeMemory, WTSQuerySessionInformationW, WTSSessionInfoEx, WTSINFOEXW,
+    WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTS_SESSIONSTATE_LOCK,
+  };
+  unsafe {
+    let mut buf = std::ptr::null_mut();
+    let mut len = 0;
+    if WTSQuerySessionInformationW(
+      WTS_CURRENT_SERVER_HANDLE,
+      WTS_CURRENT_SESSION,
+      WTSSessionInfoEx,
+      &mut buf,
+      &mut len,
+    ) == 0
+    {
+      return false;
+    }
+    let info = &*(buf as *const WTSINFOEXW);
+    let locked =
+      info.Level == 1 && info.Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK as i32;
+    WTSFreeMemory(buf.cast());
+    locked
+  }
+}
+
 fn open_pattern_editor(app: &AppHandle) {
   if let Some(win) = app.get_webview_window("pattern-editor") {
     let _ = win.show();
@@ -312,6 +341,24 @@ pub fn run() {
         let h2 = h.clone();
         let _ = h.run_on_main_thread(move || open_pattern_editor(&h2));
       });
+
+      // Tell the bubble when the session locks/unlocks so it can hold the pomodoro.
+      // The WebView keeps rendering behind the lock screen, so the frontend can't see it.
+      #[cfg(windows)]
+      {
+        let h_lock = app.handle().clone();
+        std::thread::spawn(move || {
+          let mut was_locked = false;
+          loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let locked = screen_locked();
+            if locked != was_locked {
+              was_locked = locked;
+              let _ = h_lock.emit_to("bubble", "screen-locked", locked);
+            }
+          }
+        });
+      }
 
       Ok(())
     })
