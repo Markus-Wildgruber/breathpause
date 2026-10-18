@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use tauri::{
-  menu::{Menu, MenuItem, PredefinedMenuItem},
+  menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
   tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
   AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
@@ -18,6 +18,11 @@ struct PausedPayload {
   paused: bool,
 }
 
+#[derive(serde::Deserialize)]
+struct MusicPayload {
+  on: bool,
+}
+
 // Live tray state + handles so the toggle/pause labels can flip with the app's state.
 struct TrayState {
   visible: bool,
@@ -28,6 +33,7 @@ struct TrayState {
 struct Tray {
   toggle: MenuItem<tauri::Wry>,
   pause: MenuItem<tauri::Wry>,
+  music: CheckMenuItem<tauri::Wry>,
   settings: MenuItem<tauri::Wry>,
   exit: MenuItem<tauri::Wry>,
   state: Mutex<TrayState>,
@@ -63,6 +69,14 @@ fn toggle_bubble(app: &AppHandle) {
   }
 }
 
+// WebView2 flags for every window. All windows share one browser environment, and a window
+// asking for different flags fails to open, so this must match the bubble's
+// additionalBrowserArgs in tauri.conf.json (a test checks). wry's defaults are repeated
+// because setting any args replaces them; the autoplay policy lets remembered breathing
+// music start after a restart without a click.
+const BROWSER_ARGS: &str =
+  "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+
 fn open_settings(app: &AppHandle) {
   if let Some(win) = app.get_webview_window("settings") {
     let _ = win.show();
@@ -89,6 +103,7 @@ fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     .resizable(false)
     .center()
     .visible(false)   // shown by the frontend after the saved position is restored (no flash)
+    .additional_browser_args(BROWSER_ARGS)
     .icon(icon)?
     .build()?;
   Ok(())
@@ -192,6 +207,7 @@ fn open_pattern_editor(app: &AppHandle) {
   .resizable(false)
   .center()
   .visible(false)   // shown by the frontend after the saved position is restored (no flash)
+  .additional_browser_args(BROWSER_ARGS)
   .icon(icon) else { return };
   let _ = builder.build();
 }
@@ -229,14 +245,17 @@ pub fn run() {
       // Labels start at the bubble's initial state: visible (Hide) and running (Pause).
       let toggle = MenuItem::with_id(app, "toggle", "Hide", true, None::<&str>)?;
       let pause = MenuItem::with_id(app, "pause", "Pause", true, None::<&str>)?;
+      // Checked state comes from the bubble (music-changed), which owns the setting.
+      let music = CheckMenuItem::with_id(app, "music", "Music", true, false, None::<&str>)?;
       let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
       let sep = PredefinedMenuItem::separator(app)?;
       let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-      let menu = Menu::with_items(app, &[&toggle, &pause, &settings, &sep, &quit])?;
+      let menu = Menu::with_items(app, &[&toggle, &pause, &music, &settings, &sep, &quit])?;
 
       app.manage(Tray {
         toggle: toggle.clone(),
         pause: pause.clone(),
+        music: music.clone(),
         settings: settings.clone(),
         exit: quit.clone(),
         state: Mutex::new(TrayState {
@@ -258,6 +277,9 @@ pub fn run() {
           "toggle" => toggle_bubble(app),
           "pause" => {
             let _ = app.emit_to("bubble", "toggle-pause", ());
+          }
+          "music" => {
+            let _ = app.emit_to("bubble", "toggle-music", ());
           }
           "settings" => open_settings(app),
           "quit" => app.exit(0),
@@ -315,6 +337,20 @@ pub fn run() {
             tray.state.lock().unwrap().paused = payload.paused;
           }
           refresh_pause(&h2);
+        });
+      });
+
+      // The bubble reports music on/off (bubble button, tray, settings) for the check mark.
+      let h_music = app.handle().clone();
+      app.listen_any("music-changed", move |event| {
+        let Ok(payload) = serde_json::from_str::<MusicPayload>(event.payload()) else {
+          return;
+        };
+        let h2 = h_music.clone();
+        let _ = h_music.run_on_main_thread(move || {
+          if let Some(tray) = h2.try_state::<Tray>() {
+            let _ = tray.music.set_checked(payload.on);
+          }
         });
       });
 

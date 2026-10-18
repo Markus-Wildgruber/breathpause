@@ -73,6 +73,8 @@ export const DEFAULT_SETTINGS = {
     work:  modeDefaults({ skin: 'orb', sizePx: 200 }),
     break: modeDefaults({ skin: 'sleepy-seal', sizePx: 320 }),
   },
+  // Generated breathing music (lib/music.js). volume/room are 0..1.
+  music: { on: false, sound: 'handpan', hold: 'ring', volume: 0.55, room: 0.5 },
   behavior: {
     autoStart: true,
     startOnBoot: false,
@@ -169,6 +171,7 @@ export function loadSettings() {
       }
       if (raw.skinColors && typeof raw.skinColors === 'object') Object.assign(base.skinColors, raw.skinColors);
       if (raw.behavior && typeof raw.behavior === 'object') Object.assign(base.behavior, raw.behavior);
+      if (raw.music && typeof raw.music === 'object') Object.assign(base.music, raw.music);
       if (raw.hotkeys && typeof raw.hotkeys === 'object') {
         // '' = never configured (hotkeys predate their implementation) -> keep the
         // default. null = explicitly disabled via the clear button -> stays off.
@@ -185,6 +188,30 @@ export function loadSettings() {
     }
   } catch { /* corrupted storage -> defaults */ }
   return base;
+}
+
+// The bubble saves its own parts of the settings (work appearance, skin colors, dialog flags,
+// music) while the settings window may be open with unsaved changes. Only the values that
+// actually changed are passed on, and the settings window applies just those.
+const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+export function bubbleChanges(before, after) {
+  const out = {};
+  const keys = (section, a, b) => {
+    const d = {};
+    for (const k of Object.keys(b)) if (!sameValue(a?.[k], b[k])) d[k] = b[k];
+    if (Object.keys(d).length) out[section] = d;
+  };
+  keys('work', before.appearance.work, after.appearance.work);
+  if (!sameValue(before.skinColors, after.skinColors)) out.skinColors = after.skinColors;
+  keys('behavior', before.behavior, after.behavior);
+  keys('music', before.music, after.music);
+  return out;
+}
+export function applyBubbleChanges(s, changes) {
+  if (changes.work) Object.assign(s.appearance.work, changes.work);
+  if (changes.skinColors) s.skinColors = changes.skinColors;
+  if (changes.behavior) Object.assign(s.behavior, changes.behavior);
+  if (changes.music) Object.assign(s.music, changes.music);
 }
 
 export function saveSettings(s) {

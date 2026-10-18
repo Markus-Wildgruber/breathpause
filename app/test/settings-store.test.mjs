@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   DEFAULT_SETTINGS, DEFAULT_PATTERNS, MODES, modeKey, loadSettings, saveSettings, newSkinId,
-  applyPatternResult,
+  applyPatternResult, bubbleChanges, applyBubbleChanges,
 } from '../src/lib/settings-store.js';
 
 const KEY = 'breathpause.settings';
@@ -53,6 +53,47 @@ test('per-line text fields (bubble edit mode) default to no offset and the share
   assert.equal(s.behavior.startOnBoot, true);       // stored wins
   assert.equal(s.behavior.hideNoticeOff, false);    // new flags defaulted
   assert.equal(s.behavior.editAutoSave, false);
+});
+
+test('breathing music: off by default, stored choices merge onto the defaults', () => {
+  setStored(null);
+  assert.deepEqual(loadSettings().music, { on: false, sound: 'handpan', hold: 'ring', volume: 0.55, room: 0.5 });
+  setStored({ music: { on: true, sound: 'kalimba' } });
+  const m = loadSettings().music;
+  assert.equal(m.on, true);
+  assert.equal(m.sound, 'kalimba');
+  assert.equal(m.hold, 'ring');       // default kept
+});
+
+test('bubbleChanges lists only the values that differ, per section', () => {
+  const before = structuredClone(DEFAULT_SETTINGS);
+  const after = structuredClone(DEFAULT_SETTINGS);
+  assert.deepEqual(bubbleChanges(before, after), {});
+  after.music.on = true;
+  assert.deepEqual(bubbleChanges(before, after), { music: { on: true } });
+  after.appearance.work.sizePx = 300;
+  after.skinColors = { orb: '#ff0000' };
+  after.behavior.editAutoSave = true;
+  assert.deepEqual(bubbleChanges(before, after), {
+    work: { sizePx: 300 }, skinColors: { orb: '#ff0000' }, behavior: { editAutoSave: true }, music: { on: true },
+  });
+});
+
+test('applyBubbleChanges touches only the changed values, leaving unsaved edits elsewhere alone', () => {
+  // the settings window has unsaved changes of its own
+  const s = structuredClone(DEFAULT_SETTINGS);
+  s.appearance.work.sizePx = 333;
+  s.appearance.work.skin = 'cute-bear';
+  s.skinColors = { orb: '#00ff00' };
+  applyBubbleChanges(s, { music: { on: true } });       // the bubble toggled music
+  assert.equal(s.music.on, true);
+  assert.equal(s.appearance.work.sizePx, 333);
+  assert.equal(s.appearance.work.skin, 'cute-bear');
+  assert.deepEqual(s.skinColors, { orb: '#00ff00' });
+  applyBubbleChanges(s, { work: { posRight: 12 }, skinColors: { orb: '#123456' } });
+  assert.equal(s.appearance.work.posRight, 12);         // any key the bubble writes, no fixed list
+  assert.equal(s.appearance.work.sizePx, 333);
+  assert.deepEqual(s.skinColors, { orb: '#123456' });
 });
 
 test('corrupted JSON falls back to defaults', () => {

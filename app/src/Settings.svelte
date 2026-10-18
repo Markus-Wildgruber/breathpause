@@ -6,6 +6,7 @@
     loadSettings,
     saveSettings,
     newSkinId,
+    applyBubbleChanges,
   } from "./lib/settings-store.js";
   import {
     loadSkinById,
@@ -13,8 +14,11 @@
     scanColors,
     isNeutral,
     parseSkinImport,
+    skinChoices,
   } from "./lib/skin.js";
   import Stepper from "./lib/Stepper.svelte";
+  import Pattern from "./core/pattern.js";
+  import { SOUNDS, HOLDS, createMusic } from "./lib/music.js";
 
   const inTauri =
     typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -40,6 +44,29 @@
   );
   let mode = $state("work");
   let ap = $derived(s.appearance[mode]);
+
+  // "Listen" in Behavior > Breathing music: plays the work pattern with the chosen sound here,
+  // following the controls while it plays (volume/room live, sound/hold by restarting).
+  const preview = createMusic();
+  let previewing = $state(false);
+  let previewKey = "";
+  function startPreview() {
+    previewKey = `${s.music.sound}|${s.music.hold}`;
+    preview.start(Pattern.toEnginePattern(s, "work").phases, 0);
+  }
+  function togglePreview() {
+    previewing = !previewing;
+    if (previewing) startPreview();
+    else preview.stop();
+  }
+  $effect(() => {
+    const m = s.music;
+    preview.setOptions({ sound: m.sound, hold: m.hold, volume: m.volume, room: m.room });
+    if (previewing && `${m.sound}|${m.hold}` !== previewKey) startPreview();
+  });
+  $effect(() => {
+    if (pane !== "behavior" && previewing) { preview.stop(); previewing = false; }
+  });
 
   const HOTKEY_ROWS = [
     { id: "startStop", label: "Start / Stop timer" },
@@ -113,21 +140,7 @@
     { id: "about", label: "About" },
   ];
 
-  const BUNDLED_SKINS = [
-    { id: "orb", name: "Classic Orb" },
-    { id: "sleepy-seal", name: "Sleepy Seal" },
-    { id: "cute-bear", name: "Cute Bear" },
-    { id: "sweet-jelly", name: "Sweet Jelly" },
-  ];
-
-  let allSkins = $derived([
-    ...BUNDLED_SKINS,
-    ...(s.customSkins || []).map((cs) => ({
-      id: cs.id,
-      name: cs.name,
-      custom: true,
-    })),
-  ]);
+  let allSkins = $derived(skinChoices(s.customSkins));
 
   // Duration <Stepper> formatters. 'work' is hh:mm (a bare number is minutes); 'break'/'long'
   // are mm:ss (a bare number is seconds — so typing 90 becomes 1:30). Values are raw seconds.
@@ -462,18 +475,11 @@
     if (!ids.has(s.timers.breakPattern)) s.timers.breakPattern = fresh.timers.breakPattern;
   }
 
-  // The bubble's edit mode saved text tweaks (and its dialog flags): take them over, so
-  // saving this window afterwards doesn't write the old values back.
-  function refreshBubbleEdits() {
-    const fresh = loadSettings();
-    for (const k of ["labelOffsetX", "labelOffsetY", "subOffsetX", "subOffsetY",
-                     "labelColor", "subColor", "labelSize", "subSize", "sizePx", "opacity",
-                     "showPhaseLabel", "showPhaseCountdown", "showPomodoro", "showSessions"]) {
-      s.appearance.work[k] = fresh.appearance.work[k];
-    }
-    s.skinColors = fresh.skinColors;
-    s.behavior.hideNoticeOff = fresh.behavior.hideNoticeOff;
-    s.behavior.editAutoSave = fresh.behavior.editAutoSave;
+  // The bubble saved some of its settings (edit mode, dialog choices, music): take over exactly
+  // the values it changed, so saving this window later doesn't write old values back, while
+  // anything changed here and not yet saved stays as it is.
+  function refreshBubbleEdits({ payload }) {
+    if (payload) applyBubbleChanges(s, payload);
   }
 
   function previewSize(px) {
@@ -1096,6 +1102,73 @@
             />Chime on transitions</label
           >
         </div>
+        <!-- The two choices the bubble's dialogs offer ("Don't show again", "Always save"),
+             so they can be changed back. -->
+        <div class="card">
+          <div class="ch">Bubble</div>
+          <label class="chk"
+            ><input
+              type="checkbox"
+              bind:checked={
+                () => !s.behavior.hideNoticeOff,
+                (v) => (s.behavior.hideNoticeOff = !v)
+              }
+            />Remind me the app keeps running in the tray when I hide the bubble</label
+          >
+          <label class="chk"
+            ><input
+              type="checkbox"
+              bind:checked={s.behavior.editAutoSave}
+            />Save changes without asking when closing edit mode</label
+          >
+        </div>
+        <div class="card">
+          <div class="ch">Breathing music</div>
+          <label class="chk"
+            ><input type="checkbox" bind:checked={s.music.on} />Play breathing music (also on the
+            bubble's speaker button and in the tray)</label
+          >
+          <div class="row">
+            <label for="music-sound">Sound</label>
+            <select id="music-sound" class="ctl" bind:value={s.music.sound}>
+              {#each SOUNDS as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
+            </select>
+          </div>
+          <div class="row">
+            <label for="music-hold">Hold style</label>
+            <div class="music-hold">
+              <select id="music-hold" class="ctl" bind:value={s.music.hold}>
+                {#each HOLDS as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
+              </select>
+              <span class="hint">{HOLDS.find((h) => h.id === s.music.hold)?.desc}</span>
+            </div>
+          </div>
+          <div class="row">
+            <label for="music-volume">Volume</label>
+            <div class="sliderwrap">
+              <input id="music-volume" type="range" min="0" max="100"
+                bind:value={() => Math.round(s.music.volume * 100), (v) => (s.music.volume = v / 100)} />
+              <span class="sval">{Math.round(s.music.volume * 100)}%</span>
+            </div>
+          </div>
+          <div class="row">
+            <label for="music-room">Room</label>
+            <div class="sliderwrap">
+              <input id="music-room" type="range" min="0" max="100"
+                bind:value={() => Math.round(s.music.room * 100), (v) => (s.music.room = v / 100)} />
+              <span class="sval">{Math.round(s.music.room * 100)}%</span>
+            </div>
+          </div>
+          <div class="row">
+            <span class="rowlabel"></span>
+            <div>
+              <button class="btn" onclick={togglePreview} aria-pressed={previewing}
+                >{previewing ? "Stop" : "Listen"}</button
+              >
+              <span class="hint">Plays your work pattern with these choices.</span>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <div class="ch">Hotkeys</div>
           {#each HOTKEY_ROWS as h (h.id)}
@@ -1485,6 +1558,17 @@
     color: var(--muted);
   }
 
+  .hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: 10px;
+  }
+  .music-hold {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 0;
+  }
   .sliderwrap {
     display: flex;
     align-items: center;

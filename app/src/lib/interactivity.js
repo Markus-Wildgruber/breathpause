@@ -3,7 +3,7 @@
 // Default: the window ignores all mouse input (clicks land on whatever is underneath).
 // A poller watches the global cursor; after dwelling over the bubble for `dwellMs`
 // the window turns interactive: cursor switches (body.hot) and a left-press on the bubble
-// (.stage) starts dragging the window. Leaving the bubble reverts to click-through.
+// or its text (.stage, .textblock) starts dragging the window. Leaving the bubble reverts to click-through.
 //
 // During a break the bubble goes fullscreen and must be fully interactive (exit button),
 // so the poller can be paused via setHoverDragActive(false) — which also drops
@@ -44,7 +44,7 @@ export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 1
   // and the DOM 'dblclick' never fires, so we time consecutive mousedowns ourselves.
   let lastDown = 0;
   window.addEventListener('mousedown', (e) => {
-    if (!hot || pinned || e.button !== 0 || !e.target.closest('.stage')) return;
+    if (!hot || pinned || e.button !== 0 || !e.target.closest('.stage, .textblock')) return;
     const now = Date.now();
     if (now - lastDown < 350) {
       lastDown = 0;

@@ -4,10 +4,11 @@
   import Pomodoro from './core/pomodoro.js';
   import Timefmt from './core/timefmt.js';
   import Pattern from './core/pattern.js';
-  import { loadSkin, loadSkinById, mountSkin } from './lib/skin.js';
+  import { loadSkin, loadSkinById, mountSkin, skinChoices } from './lib/skin.js';
   import { setupHoverDrag, setHoverDragActive, setPinned } from './lib/interactivity.js';
-  import { loadSettings, saveSettings, mergePatch, modeKey } from './lib/settings-store.js';
+  import { loadSettings, saveSettings, mergePatch, modeKey, bubbleChanges } from './lib/settings-store.js';
   import { editLayout, editMargin } from './lib/edit-layout.js';
+  import { createMusic, musicStep } from './lib/music.js';
 
   let settings = $state(loadSettings());
 
@@ -33,6 +34,41 @@
   // Lifted out of onMount so the exit/Esc handlers can advance the pomodoro.
   let pomo = null;
   let paused = false;
+  let breathT = 0;                   // seconds into the breathing pattern (the bubble's clock)
+
+  // ===== breathing music =====
+  const music = createMusic();
+  let musicKey = '';
+
+  // Bring the music in line with the settings and the timer (decision: musicStep): the current
+  // mode's pattern while on, faded out while the timer is paused, silent when off. Every start
+  // joins at the bubble's current breathT, so resuming or switching never jumps.
+  function syncMusic() {
+    const m = settings.music;
+    music.setOptions({ sound: m.sound, hold: m.hold, volume: m.volume, room: m.room });
+    const phases = currentMode ? Pattern.toEnginePattern(settings, currentMode).phases : [];
+    const key = JSON.stringify([currentMode, m.sound, m.hold, phases]);
+    const step = musicStep({
+      on: m.on && !!currentMode, paused, playing: music.playing, musicPaused: music.paused,
+      keyChanged: key !== musicKey,
+    });
+    if (step === 'start') { musicKey = key; music.start(phases, breathT); }
+    else if (step === 'pause') music.pause();
+    else if (step === 'stop') { musicKey = ''; music.stop(); }
+  }
+
+  async function toggleMusic() {
+    settings.music.on = !settings.music.on;
+    syncMusic();
+    await persistBubbleSettings('music');   // only music: never unsaved edit-mode changes
+    emitMusicState();
+  }
+
+  async function emitMusicState() {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    const { emit } = await import('@tauri-apps/api/event');
+    emit('music-changed', { on: settings.music.on });   // tray shows the Music check mark
+  }
 
   function playChime() {
     if (!settings.behavior?.chimeOnTransitions) return;
@@ -160,6 +196,8 @@
                    '#06D6A0', '#2EC4B6', '#118AB2', '#8E7DFF', '#9AA0A6'];
   // Room (CSS px) the window grows by on each side: side rail (76) + color panel (190) + gaps.
   const EDIT_ROOM = 300;
+  // Below the bubble: the text (64) and the skin strip under it.
+  const EDIT_BELOW = 64 + 76;
 
   let editing = $state(false);
   let selected = $state(null);       // 'bubble' | 'label' | 'sub' | null
@@ -180,28 +218,37 @@
     ? [BUBBLE_RANGE[0], editPad?.maxSize ?? BUBBLE_RANGE[1]]
     : SIZE_RANGE[selected] ?? [0, 0]);
 
-  async function emitEvent(name) {
+  async function emitEvent(name, payload) {
     if (!('__TAURI_INTERNALS__' in window)) return;
     const { emit } = await import('@tauri-apps/api/event');
-    await emit(name);
+    await emit(name, payload);
   }
 
-  // Write only what the bubble owns onto a fresh load, so a concurrent save from the
-  // settings window or pattern editor isn't clobbered by this window's stale copy.
-  async function persistBubbleSettings() {
-    const fresh = loadSettings();
-    fresh.appearance.work = $state.snapshot(settings.appearance.work);
-    fresh.skinColors = $state.snapshot(settings.skinColors);
-    fresh.behavior.hideNoticeOff = settings.behavior.hideNoticeOff;
-    fresh.behavior.editAutoSave = settings.behavior.editAutoSave;
+  // Save only the named parts onto a fresh load, so neither a concurrent save from the settings
+  // window or pattern editor nor in-progress edits get written by accident:
+  //   'edit' = work appearance + skin colors, 'behavior' = dialog choices, 'music' = music.
+  // The settings window is told exactly which values changed and takes over only those.
+  async function persistBubbleSettings(...parts) {
+    const before = loadSettings(), fresh = structuredClone(before);
+    if (parts.includes('edit')) {
+      fresh.appearance.work = $state.snapshot(settings.appearance.work);
+      fresh.skinColors = $state.snapshot(settings.skinColors);
+    }
+    if (parts.includes('behavior')) {
+      fresh.behavior.hideNoticeOff = settings.behavior.hideNoticeOff;
+      fresh.behavior.editAutoSave = settings.behavior.editAutoSave;
+    }
+    if (parts.includes('music')) fresh.music = $state.snapshot(settings.music);
+    const changes = bubbleChanges(before, fresh);
+    if (!Object.keys(changes).length) return;
     saveSettings(fresh);
-    await emitEvent('bubble-settings-saved');
+    await emitEvent('bubble-settings-saved', changes);
   }
 
   // Widen the window around the bubble without moving it on screen, with room for the
   // controls and for the bubble to grow to its max (see edit-layout.js).
   async function expandWindow() {
-    const base = { sizePx: ap.sizePx, room: EDIT_ROOM, maxBubble: BUBBLE_RANGE[1] };
+    const base = { sizePx: ap.sizePx, room: EDIT_ROOM, maxBubble: BUBBLE_RANGE[1], below: EDIT_BELOW };
     if (!('__TAURI_INTERNALS__' in window)) {
       editPad = editLayout({ ...base, x: 0, y: 0, w: ap.sizePx, h: ap.sizePx + 64, monX: 0, monY: 0,
                              monW: innerWidth, monH: innerHeight, sf: 1 });
@@ -227,6 +274,57 @@
     if (currentSkin) mounted = mountSkin(stage, currentSkin, { fill: settings.skinColors?.[ap.skin] });
   }
 
+  // Load + mount whatever ap.skin now names (after a skin switch, or a discard that undid one).
+  async function refreshSkin() {
+    const skin = await skinFor('work');
+    currentSkin = skin;
+    textColor = ap.textColor || skin.manifest.text?.color || '#eef6ff';
+    remountSkin();
+  }
+
+  // ----- skin strip (edit mode, bubble selected) -----
+  let skinList = $derived(skinChoices(settings.customSkins));
+  let stripEl = $state(null);
+  let sideH = $state(0);
+  let canLeft = $state(false), canRight = $state(false);
+
+  function switchSkin(id) {
+    if (ap.skin === id) return;
+    ap.skin = id;
+    colorOpen = false;
+    refreshSkin();
+  }
+
+  function updateStripNav() {
+    if (!stripEl) return;
+    canLeft = stripEl.scrollLeft > 2;
+    canRight = stripEl.scrollLeft + stripEl.clientWidth < stripEl.scrollWidth - 2;
+  }
+
+  function scrollSkins(dir) {
+    stripEl?.scrollBy({ left: dir * stripEl.clientWidth * 0.8, behavior: 'smooth' });
+  }
+
+  // On open: bring the current skin into view and set the arrows.
+  $effect(() => {
+    if (!stripEl) return;
+    skinList.length;
+    stripEl.querySelector('.sk.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    requestAnimationFrame(updateStripNav);
+  });
+
+  // Svelte action: a still thumbnail of a skin, in its saved color, eyes open.
+  function thumb(el, id) {
+    let alive = true;
+    loadSkinById(id, settings.customSkins)
+      .then((skin) => {
+        if (!alive) return;
+        mountSkin(el, skin, { fill: settings.skinColors?.[id] }).apply({ breath: 0.8, time: 0 });
+      })
+      .catch(() => {});                    // a broken skin just shows an empty tile
+    return { destroy() { alive = false; } };
+  }
+
   async function startEdit() {
     editSnapshot = {
       work: $state.snapshot(settings.appearance.work),
@@ -238,7 +336,7 @@
     await expandWindow();
   }
 
-  // relayout=false when a mode switch is about to lay the window out anyway.
+  // relayout=false when a mode switch is about to lay the window out (and mount its skin) anyway.
   async function finishEdit(save, relayout = true) {
     if (!editing) return;
     editing = false;
@@ -246,11 +344,11 @@
     colorOpen = false;
     dialog = null;
     if (save) {
-      await persistBubbleSettings();
+      await persistBubbleSettings('edit', 'behavior');   // behavior: "Always save" from the dialog
     } else {
       Object.assign(settings.appearance.work, editSnapshot.work);
       settings.skinColors = editSnapshot.skinColors;
-      remountSkin();
+      if (relayout) await refreshSkin();
     }
     editSnapshot = null;
     setPinned(false);
@@ -266,12 +364,18 @@
     }) !== JSON.stringify(editSnapshot);
   }
 
-  function escInEdit() {
-    if (dialog) { dialog = null; return; }
-    if (colorOpen) { colorOpen = false; return; }
+  // The ✕ button: close edit mode, asking about unsaved changes unless "save on close" is set.
+  function closeEdit() {
     if (!editChanged()) finishEdit(false);
     else if (settings.behavior.editAutoSave) finishEdit(true);
     else { dontAsk = false; dialog = 'save'; }
+  }
+
+  // Esc peels back one layer at a time: dialog, color panel, then edit mode (as ✕).
+  function escInEdit() {
+    if (dialog) { dialog = null; return; }
+    if (colorOpen) { colorOpen = false; return; }
+    closeEdit();
   }
 
   function answerSave(save) {
@@ -291,7 +395,7 @@
     setPinned(false);
     if (dontAsk) {
       settings.behavior.hideNoticeOff = true;
-      await persistBubbleSettings();
+      await persistBubbleSettings('behavior');
     }
     emitEvent('toggle-bubble');
   }
@@ -407,10 +511,15 @@
         paused = p;
         pomo = paused ? Pomodoro.pause(pomo) : Pomodoro.resume(pomo);
         emit('paused-changed', { paused });   // let the tray menu show Pause vs Resume
+        syncMusic();                          // music fades with every kind of pause (manual, hide, lock)
       }
-      let pausedByHide = false;
+      listen('toggle-music', () => toggleMusic());
+      // Pauses the app made on its own (bubble hidden, screen locked) that it may undo later.
+      // Any pause/resume by the user takes over, so both are cleared then.
+      let pausedByHide = false, pausedByLock = false;
+      const clearAutoPause = () => { pausedByHide = false; pausedByLock = false; };
       listen('toggle-pause', () => {
-        pausedByHide = false;
+        clearAutoPause();
         setPaused(!paused);
       });
       // Hiding the bubble puts the pomodoro on hold (no surprise break overlay while
@@ -425,7 +534,6 @@
         }
       });
       // Same for a locked screen: hold while locked, resume only a lock-pause on unlock.
-      let pausedByLock = false;
       listen('screen-locked', ({ payload: locked }) => {
         if (locked && !paused) {
           pausedByLock = true;
@@ -443,7 +551,7 @@
       const hotkeyActions = {
         // stop = back to a fresh work session, on hold; start = run again
         startStop: () => {
-          pausedByHide = false;
+          clearAutoPause();
           if (paused) {
             setPaused(false);
           } else {
@@ -451,7 +559,7 @@
             setPaused(true);
           }
         },
-        pauseResume: () => { pausedByHide = false; setPaused(!paused); },
+        pauseResume: () => { clearAutoPause(); setPaused(!paused); },
         skip: () => { pomo = Pomodoro.skip(pomo).state; },
         settings: () => emit('open-settings'),
         hide: () => emit('toggle-bubble'),
@@ -506,6 +614,8 @@
         // settings (appearance, patterns, an unchanged work timer) keeps the live countdown.
         pomo = Pomodoro.applyConfig(pomo, settings.timers);
         await showMode(pomo.mode);
+        syncMusic();
+        emitMusicState();
         await applyHotkeys();
         await syncAutostart();
       });
@@ -529,9 +639,16 @@
     }
     await showMode(pomo.mode);
 
+    syncMusic();
+    emitMusicState();
+    // Autoplay rules can keep remembered music silent until the first click: on any click,
+    // restart it at the bubble's current position (inside the click, so it is allowed to play).
+    window.addEventListener('pointerdown', () => {
+      if (settings.music.on && music.playing && !music.running && !paused) { musicKey = ''; syncMusic(); }
+    }, true);
+
     const start = performance.now();
     let last = start;
-    let breathT = 0;
 
     function frame(now) {
       // Cap the per-frame delta at 1s so waking from sleep doesn't fast-forward
@@ -543,15 +660,19 @@
       if (r.events?.some(ev => ev === 'work_complete' || ev === 'break_complete')) playChime();
       pomo = r.state;
       if (pomo.mode !== currentMode) {
-        // Break starting mid-edit: keep the edits; showMode resizes the window itself.
-        finishEdit(true, false);
+        // Break starting mid-edit: the save question can't be asked on the break screen, so the
+        // unsaved edits are dropped (never saved without asking). showMode lays out the window.
+        finishEdit(false, false);
         if (dialog === 'hide') { dialog = null; setPinned(false); }
         breathT = 0;
         showMode(pomo.mode);
+        syncMusic();                     // the new mode's pattern, from its start
       }
 
       const pattern = Pattern.toEnginePattern(settings, currentMode);
-      if (!paused) breathT += dt;
+      // While music sounds, its audio clock drives the bubble so picture and sound can't drift.
+      if (music.running) breathT = music.breathTime();
+      else if (!paused) breathT += dt;
       const breath = Breathing.sizeAt(pattern, breathT);
       mounted?.apply({ breath, time: Math.sin(breathT) });
 
@@ -611,14 +732,18 @@
   {#if !breaking}
     <div class="bubble-btns edit-ui" class:show={editing}>
       <button class="bb" onclick={() => (editing ? finishEdit(true) : startEdit())}
-              title={editing ? 'Save' : 'Edit'} aria-label={editing ? 'Save' : 'Edit'}>
+              title={editing ? 'Save and close' : 'Edit'} aria-label={editing ? 'Save and close' : 'Edit'}>
         {#if editing}
           <svg viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7" /></svg>
         {:else}
           <svg viewBox="0 0 16 16"><path d="M10.5 2.5l3 3L5.5 13.5H2.5v-3z" /></svg>
         {/if}
       </button>
-      {#if !editing}
+      {#if editing}
+        <button class="bb" onclick={closeEdit} title="Close (Esc)" aria-label="Close edit mode">
+          <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      {:else}
         <button class="bb" onclick={() => emitEvent('open-settings')} title="Settings" aria-label="Settings">
           <svg viewBox="0 0 16 16"><path d="M12.8 6.01L14.84 6.5V9.5L12.8 9.99L13.9 11.77L11.77 13.9L9.99 12.8L9.5 14.84H6.5L6.01 12.8L4.23 13.9L2.1 11.77L3.2 9.99L1.16 9.5V6.5L3.2 6.01L2.1 4.23L4.23 2.1L6.01 3.2L6.5 1.16H9.5L9.99 3.2L11.77 2.1L13.9 4.23Z" /><circle cx="8" cy="8" r="2.2" /></svg>
         </button>
@@ -629,8 +754,25 @@
     </div>
   {/if}
 
+  {#if !editing}
+    <!-- Music on/off: bottom right of the bubble on hover; always shown on the break screen. -->
+    <button class="bb music-btn edit-ui" class:show={breaking} aria-pressed={settings.music.on}
+            style:top={breaking ? null : `${ap.sizePx - 30}px`} onclick={toggleMusic}
+            title={settings.music.on ? 'Mute breathing music' : 'Play breathing music'}
+            aria-label={settings.music.on ? 'Mute breathing music' : 'Play breathing music'}>
+      <svg viewBox="0 0 16 16">
+        <path d="M2.5 6H5l3.5-3v10L5 10H2.5z" />
+        {#if settings.music.on}
+          <path d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.6a6 6 0 0 1 0 8.8" />
+        {:else}
+          <path d="M11 6l4 4M15 6l-4 4" />
+        {/if}
+      </svg>
+    </button>
+  {/if}
+
   {#if editing && selected}
-    <div class="side edit-ui {editPad?.side ?? 'right'}">
+    <div class="side edit-ui {editPad?.side ?? 'right'}" bind:clientHeight={sideH}>
       <div class="rails">
         <div class="rail">
           <span class="side-cap">Size</span>
@@ -680,6 +822,25 @@
           </div>
         </div>
       {/if}
+    </div>
+  {/if}
+
+  {#if editing && selected === 'bubble'}
+    <!-- Skin strip: under the text, and below the side panel so the two never overlap. -->
+    <div class="skins edit-ui {editPad?.side ?? 'right'}" role="group" aria-label="Skins"
+         style:top="{Math.max(ap.sizePx + 70, sideH + 16)}px">
+      <button class="sk-nav" class:off={!canLeft} disabled={!canLeft} onclick={() => scrollSkins(-1)}
+              aria-label="Previous skins">‹</button>
+      <div class="sk-row" bind:this={stripEl} onscroll={updateStripNav}>
+        {#each skinList as sk (sk.id)}
+          <button class="sk" class:on={ap.skin === sk.id} aria-pressed={ap.skin === sk.id}
+                  title={sk.name} aria-label={sk.name} onclick={() => switchSkin(sk.id)}>
+            <span class="sk-art" use:thumb={sk.id}></span>
+          </button>
+        {/each}
+      </div>
+      <button class="sk-nav" class:off={!canRight} disabled={!canRight} onclick={() => scrollSkins(1)}
+              aria-label="More skins">›</button>
     </div>
   {/if}
 
@@ -884,6 +1045,18 @@
     cursor: pointer;
   }
   .bb:hover { background: var(--ui-bg-hover); }
+  .music-btn { position: absolute; right: 4px; display: none; z-index: 5; }
+  :global(body.hot) .music-btn, .music-btn.show { display: grid; }
+  .music-btn[aria-pressed="true"] { color: var(--ui-accent); }
+  main.breaking .music-btn {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    width: 42px;
+    height: 42px;
+    border-radius: 11px;
+  }
+  main.breaking .music-btn svg { width: 18px; height: 18px; }
   .bb svg, .preset.custom svg {
     width: 14px;
     height: 14px;
@@ -1033,6 +1206,55 @@
     font: 11px 'Segoe UI', sans-serif;
     cursor: pointer;
   }
+  .skins {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 4px;
+    border-radius: 12px;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-line);
+    z-index: 6;
+  }
+  .skins.right { left: 0; }      /* grows toward the side with room, like the side panel */
+  .skins.left { right: 0; }
+  .sk-row {
+    display: flex;
+    gap: 6px;
+    width: 202px;                /* four tiles; more scroll */
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sk-row::-webkit-scrollbar { display: none; }
+  .sk {
+    flex: 0 0 46px;
+    height: 46px;
+    padding: 3px;
+    border-radius: 9px;
+    border: 1px solid var(--ui-line);
+    background: transparent;
+    cursor: pointer;
+  }
+  .sk:hover { background: var(--ui-bg-hover); }
+  .sk.on { outline: 2px solid var(--ui-accent); outline-offset: -1px; }
+  .sk-art { display: block; width: 100%; height: 100%; pointer-events: none; }
+  .sk-art :global(svg) { display: block; }
+  .sk-nav {
+    width: 22px;
+    height: 46px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--ui-fg);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .sk-nav:hover { background: var(--ui-bg-hover); }
+  .sk-nav.off { visibility: hidden; }
+
   /* Dialogs on the small bubble: no screen tint (it'd paint the transparent window
      rectangle), card sized to fit the bubble. */
   .confirm-backdrop.mini {
