@@ -191,6 +191,17 @@
           setPaused(false);
         }
       });
+      // Same for a locked screen: hold while locked, resume only a lock-pause on unlock.
+      let pausedByLock = false;
+      listen('screen-locked', ({ payload: locked }) => {
+        if (locked && !paused) {
+          pausedByLock = true;
+          setPaused(true);
+        } else if (!locked && pausedByLock) {
+          pausedByLock = false;
+          setPaused(false);
+        }
+      });
 
       // OS-global hotkeys: the OS registers each combo and notifies us regardless of
       // which app has focus. A combo some other app already owns simply fails to
