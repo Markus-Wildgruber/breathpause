@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { recolor, scanColors, isNeutral } from '../src/lib/skin.js';
+import { validateFace } from '../src/lib/face.js';
 
 function load(skinId) {
   const dir = new URL(`../public/skins/${skinId}/`, import.meta.url);
@@ -13,6 +14,20 @@ function load(skinId) {
   return { manifest, svg };
 }
 const count = (s, hex) => (s.match(new RegExp(hex, 'gi')) || []).length;
+
+for (const id of ['cute-bear', 'sweet-jelly']) {
+  test(`${id}: drawn face replaces the painted eyes/mouth`, () => {
+    const { manifest, svg } = load(id);
+    assert.doesNotThrow(() => validateFace(manifest.face));
+    assert.equal((svg.match(/<g id="face"\s*\/>/g) || []).length, 1, 'one face placeholder');
+    for (const gone of ['lidTopL', 'lidBotR', 'mouthOpen', 'mouthRest', 'fill="#232323"']) {
+      assert.ok(!svg.includes(gone), `${gone} removed from the art`);
+    }
+    for (const b of manifest.bindings) {
+      assert.ok(svg.includes(`id="${b.target}"`), `binding target ${b.target} exists`);
+    }
+  });
+}
 const meanLum = (svg) => {
   const hexes = [...svg.matchAll(/#[0-9a-f]{6}/gi)].map(m => m[0]);
   const lum = h => (parseInt(h.slice(1,3),16) + parseInt(h.slice(3,5),16) + parseInt(h.slice(5,7),16)) / 3;

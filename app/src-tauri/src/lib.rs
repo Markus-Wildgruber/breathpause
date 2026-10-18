@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use tauri::{
-  menu::{Menu, MenuItem, PredefinedMenuItem},
+  menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
   tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
   AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
@@ -18,6 +18,11 @@ struct PausedPayload {
   paused: bool,
 }
 
+#[derive(serde::Deserialize)]
+struct MusicPayload {
+  on: bool,
+}
+
 // Live tray state + handles so the toggle/pause labels can flip with the app's state.
 struct TrayState {
   visible: bool,
@@ -28,6 +33,7 @@ struct TrayState {
 struct Tray {
   toggle: MenuItem<tauri::Wry>,
   pause: MenuItem<tauri::Wry>,
+  music: CheckMenuItem<tauri::Wry>,
   settings: MenuItem<tauri::Wry>,
   exit: MenuItem<tauri::Wry>,
   state: Mutex<TrayState>,
@@ -63,6 +69,14 @@ fn toggle_bubble(app: &AppHandle) {
   }
 }
 
+// WebView2 flags for every window. All windows share one browser environment, and a window
+// asking for different flags fails to open, so this must match the bubble's
+// additionalBrowserArgs in tauri.conf.json (a test checks). wry's defaults are repeated
+// because setting any args replaces them; the autoplay policy lets remembered breathing
+// music start after a restart without a click.
+const BROWSER_ARGS: &str =
+  "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+
 fn open_settings(app: &AppHandle) {
   if let Some(win) = app.get_webview_window("settings") {
     let _ = win.show();
@@ -89,6 +103,7 @@ fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     .resizable(false)
     .center()
     .visible(false)   // shown by the frontend after the saved position is restored (no flash)
+    .additional_browser_args(BROWSER_ARGS)
     .icon(icon)?
     .build()?;
   Ok(())
@@ -145,6 +160,35 @@ async fn capture_monitor(x: i32, y: i32) -> Result<tauri::ipc::Response, String>
   }
 }
 
+// The session's own lock flag. (Checking whether the input desktop is reachable misses
+// the first seconds of a lock on Windows 11: the lock-screen curtain is on the user desktop.)
+#[cfg(windows)]
+fn screen_locked() -> bool {
+  use windows_sys::Win32::System::RemoteDesktop::{
+    WTSFreeMemory, WTSQuerySessionInformationW, WTSSessionInfoEx, WTSINFOEXW,
+    WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTS_SESSIONSTATE_LOCK,
+  };
+  unsafe {
+    let mut buf = std::ptr::null_mut();
+    let mut len = 0;
+    if WTSQuerySessionInformationW(
+      WTS_CURRENT_SERVER_HANDLE,
+      WTS_CURRENT_SESSION,
+      WTSSessionInfoEx,
+      &mut buf,
+      &mut len,
+    ) == 0
+    {
+      return false;
+    }
+    let info = &*(buf as *const WTSINFOEXW);
+    let locked =
+      info.Level == 1 && info.Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK as i32;
+    WTSFreeMemory(buf.cast());
+    locked
+  }
+}
+
 fn open_pattern_editor(app: &AppHandle) {
   if let Some(win) = app.get_webview_window("pattern-editor") {
     let _ = win.show();
@@ -163,6 +207,7 @@ fn open_pattern_editor(app: &AppHandle) {
   .resizable(false)
   .center()
   .visible(false)   // shown by the frontend after the saved position is restored (no flash)
+  .additional_browser_args(BROWSER_ARGS)
   .icon(icon) else { return };
   let _ = builder.build();
 }
@@ -200,14 +245,17 @@ pub fn run() {
       // Labels start at the bubble's initial state: visible (Hide) and running (Pause).
       let toggle = MenuItem::with_id(app, "toggle", "Hide", true, None::<&str>)?;
       let pause = MenuItem::with_id(app, "pause", "Pause", true, None::<&str>)?;
+      // Checked state comes from the bubble (music-changed), which owns the setting.
+      let music = CheckMenuItem::with_id(app, "music", "Music", true, false, None::<&str>)?;
       let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
       let sep = PredefinedMenuItem::separator(app)?;
       let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-      let menu = Menu::with_items(app, &[&toggle, &pause, &settings, &sep, &quit])?;
+      let menu = Menu::with_items(app, &[&toggle, &pause, &music, &settings, &sep, &quit])?;
 
       app.manage(Tray {
         toggle: toggle.clone(),
         pause: pause.clone(),
+        music: music.clone(),
         settings: settings.clone(),
         exit: quit.clone(),
         state: Mutex::new(TrayState {
@@ -229,6 +277,9 @@ pub fn run() {
           "toggle" => toggle_bubble(app),
           "pause" => {
             let _ = app.emit_to("bubble", "toggle-pause", ());
+          }
+          "music" => {
+            let _ = app.emit_to("bubble", "toggle-music", ());
           }
           "settings" => open_settings(app),
           "quit" => app.exit(0),
@@ -289,6 +340,20 @@ pub fn run() {
         });
       });
 
+      // The bubble reports music on/off (bubble button, tray, settings) for the check mark.
+      let h_music = app.handle().clone();
+      app.listen_any("music-changed", move |event| {
+        let Ok(payload) = serde_json::from_str::<MusicPayload>(event.payload()) else {
+          return;
+        };
+        let h2 = h_music.clone();
+        let _ = h_music.run_on_main_thread(move || {
+          if let Some(tray) = h2.try_state::<Tray>() {
+            let _ = tray.music.set_checked(payload.on);
+          }
+        });
+      });
+
       // Hide/show the bubble when the frontend asks (the global Hide hotkey)
       let h_tb = app.handle().clone();
       app.listen_any("toggle-bubble", move |_| {
@@ -312,6 +377,24 @@ pub fn run() {
         let h2 = h.clone();
         let _ = h.run_on_main_thread(move || open_pattern_editor(&h2));
       });
+
+      // Tell the bubble when the session locks/unlocks so it can hold the pomodoro.
+      // The WebView keeps rendering behind the lock screen, so the frontend can't see it.
+      #[cfg(windows)]
+      {
+        let h_lock = app.handle().clone();
+        std::thread::spawn(move || {
+          let mut was_locked = false;
+          loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let locked = screen_locked();
+            if locked != was_locked {
+              was_locked = locked;
+              let _ = h_lock.emit_to("bubble", "screen-locked", locked);
+            }
+          }
+        });
+      }
 
       Ok(())
     })

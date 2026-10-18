@@ -8,8 +8,28 @@
 // Sources are normalized values provided each frame: breath 0 (exhaled) .. 1 (inhaled);
 // time is seconds since start passed through sin() -> -1..1 (gentle idle wobble).
 //
+// A skin may also have a "face" block: the engine then draws its eyes and mouth (face.js)
+// at the SVG's <g id="face"/> placeholder and poses them from the breath.
+//
 // Broken skins must never break the app: loadSkin() throws with a clear message and the
 // caller falls back to the bundled orb skin (SPEC: skip + log + fall back).
+
+import { faceMarkup, faceDriver, validateFace } from './face.js';
+
+const FACE_SLOT = /<g\s+id=["']face["']\s*(?:\/>|>\s*<\/g>)/;
+
+// The skins that ship in public/skins (imported ones live in settings.customSkins).
+export const BUNDLED_SKINS = [
+  { id: 'orb', name: 'Classic Orb' },
+  { id: 'sleepy-seal', name: 'Sleepy Seal' },
+  { id: 'cute-bear', name: 'Cute Bear' },
+  { id: 'sweet-jelly', name: 'Sweet Jelly' },
+];
+
+// Every skin the user can pick: the bundled ones, then their imports.
+export function skinChoices(customSkins) {
+  return [...BUNDLED_SKINS, ...(customSkins || []).map((cs) => ({ id: cs.id, name: cs.name, custom: true }))];
+}
 
 // Load a skin by ID: checks customSkins first, falls back to bundled skins folder.
 // A custom skin's themeColor (the recolor anchor, picked at import) is carried onto
@@ -22,7 +42,7 @@ export async function loadSkinById(skinId, customSkins = []) {
       manifest: {
         name: custom.name, bindings: custom.bindings || [],
         themeColor: custom.themeColor || null, tintNeutrals: !!custom.tintNeutrals,
-        text: custom.text || undefined,
+        text: custom.text || undefined, face: custom.face || undefined,
       },
       svgText: custom.svgText, baseUrl: null,
     };
@@ -35,8 +55,11 @@ export async function loadSkin(baseUrl) {
   if (!manifest.name) throw new Error(`skin at ${baseUrl}: missing "name"`);
   const svgText = await fetchText(`${baseUrl}/${manifest.svg || 'skin.svg'}`);
   for (const b of manifest.bindings || []) validateBinding(b);
+  if (manifest.face) validateFace(manifest.face);
   return { manifest, svgText, baseUrl };
 }
+
+let faceMounts = 0;
 
 // Mount into a container element; returns a handle with apply(sources) for the rAF loop.
 // opts.palette overrides/extends the manifest palette: a map of the SVG's original hex
@@ -44,7 +67,19 @@ export async function loadSkin(baseUrl) {
 // ships in many color schemes without duplicating geometry.
 export function mountSkin(container, skin, opts = {}) {
   const palette = { ...(skin.manifest.palette || {}), ...(opts.palette || {}) };
-  let svgText = applyPalette(sanitizeSvg(skin.svgText), palette);
+  let svgText = sanitizeSvg(skin.svgText);
+  // The drawn face goes in as markup before palette/recolor, so it takes the skin's colors.
+  const face = skin.manifest.face;
+  const facePrefix = face ? `bpf${++faceMounts}-` : '';
+  if (face) {
+    // Checked here too, not only at load/import: custom skins come back from storage unchecked.
+    validateFace(face);
+    if (!FACE_SLOT.test(svgText)) throw new Error(`skin ${skin.manifest.name}: face needs <g id="face"/> in the SVG`);
+    // A replacer function, so "$&"-style patterns in the markup are never expanded.
+    const markup = faceMarkup(face, facePrefix);
+    svgText = svgText.replace(FACE_SLOT, () => markup);
+  }
+  svgText = applyPalette(svgText, palette);
   // opts.fill recolors the whole skin by hue-shifting it from the skin's themeColor
   // anchor to the fill. Skins with no anchor (e.g. bare uploads) are shown as-is.
   if (opts.fill && skin.manifest.themeColor) {
@@ -61,8 +96,10 @@ export function mountSkin(container, skin, opts = {}) {
     if (!el) throw new Error(`skin ${skin.manifest.name}: binding target "${b.target}" not in skin.svg`);
     return { ...b, el, baseTransform: el.getAttribute('transform') || '' };
   });
+  const poseFace = face ? faceDriver(svg, face, facePrefix) : null;
 
   function apply(sources) {
+    poseFace?.(sources.breath ?? 0);
     for (const b of bindings) {
       const s = sources[b.source] ?? 0;
       const v = b.from + s * (b.to - b.from);
@@ -294,6 +331,10 @@ export function parseSkinImport(manifestText, svgText) {
       throw new Error(`binding target "${b.target}" not found in the SVG`);
     }
   }
+  if (manifest.face) {
+    validateFace(manifest.face);
+    if (!FACE_SLOT.test(svgText)) throw new Error('skin.json has a "face" but the SVG has no <g id="face"/> to draw it in');
+  }
   return {
     name: manifest.name,
     svgText,
@@ -301,6 +342,7 @@ export function parseSkinImport(manifestText, svgText) {
     tintNeutrals: !!manifest.tintNeutrals,
     bindings,
     text: manifest.text || null,
+    face: manifest.face || null,
   };
 }
 

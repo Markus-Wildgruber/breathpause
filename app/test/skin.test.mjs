@@ -2,8 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   validateBinding, applyPalette, recolor, scanColors, isNeutral, sanitizeSvg,
-  parseSkinImport, loadSkinById,
+  parseSkinImport, loadSkinById, skinChoices, BUNDLED_SKINS,
 } from '../src/lib/skin.js';
+
+test('skinChoices: bundled skins first, then imported ones marked custom', () => {
+  const list = skinChoices([{ id: 'custom-1', name: 'Mine', svgText: '<svg/>' }]);
+  assert.deepEqual(list.slice(0, BUNDLED_SKINS.length), BUNDLED_SKINS);
+  assert.deepEqual(list.at(-1), { id: 'custom-1', name: 'Mine', custom: true });
+  assert.deepEqual(skinChoices(undefined), BUNDLED_SKINS);
+});
 
 const ok = { target: 'orb', property: 'scale', source: 'breath', from: 0, to: 1 };
 
@@ -214,4 +221,21 @@ test('loadSkinById carries an imported skin\'s bindings and text onto the manife
 test('loadSkinById still gives a bare-SVG custom skin empty bindings', async () => {
   const skin = await loadSkinById('c2', [{ id: 'c2', name: 'Plain', svgText: '<svg/>' }]);
   assert.deepEqual(skin.manifest.bindings, []);
+});
+
+const FACE_MANIFEST = (svgFace = true) => JSON.stringify({
+  name: 'Face Bear',
+  face: { eyes: [{ cx: 30, cy: 40, r: 10 }], line: '#524F75', lineWidth: 3, lid: '#C38155', white: '#FFFFFF', pupil: '#232323' },
+});
+const FACE_SVG = '<svg viewBox="0 0 100 100"><g id="body"><g id="face"/></g></svg>';
+
+test('parseSkinImport keeps a valid face block, and loadSkinById carries it onto the manifest', async () => {
+  const out = parseSkinImport(FACE_MANIFEST(), FACE_SVG);
+  assert.equal(out.face.eyes.length, 1);
+  const skin = await loadSkinById('c3', [{ id: 'c3', ...out }]);
+  assert.deepEqual(skin.manifest.face, out.face);
+});
+
+test('parseSkinImport rejects a face block without a <g id="face"/> placeholder in the SVG', () => {
+  assert.throws(() => parseSkinImport(FACE_MANIFEST(), GOOD_SVG), /id="face"/);
 });

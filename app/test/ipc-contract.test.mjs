@@ -22,9 +22,9 @@ const jsSources = readdirSync(new URL('src/', root), { recursive: true })
   .join('\n');
 
 // Events the JS side emits for the Rust side to handle.
-const JS_TO_RUST = ['app-quit', 'apply-tray-text', 'open-settings', 'open-pattern-editor'];
+const JS_TO_RUST = ['app-quit', 'apply-tray-text', 'open-settings', 'open-pattern-editor', 'music-changed'];
 // Events the Rust side emits for the JS side to handle.
-const RUST_TO_JS = ['toggle-pause'];
+const RUST_TO_JS = ['toggle-pause', 'toggle-music'];
 
 // Match emit('ev') / emit("ev") regardless of quote style (prettier may flip them).
 const jsCalls = (fn, ev) => jsSources.includes(`${fn}('${ev}'`) || jsSources.includes(`${fn}("${ev}"`);
@@ -64,4 +64,24 @@ test('every window label created/emitted-to is allowed in the capability manifes
   for (const label of ['bubble', 'settings', 'pattern-editor']) {
     assert.ok(allowed.has(label), `capability windows should include "${label}"`);
   }
+});
+
+test('music-changed payload: the bubble sends the one field Rust reads', () => {
+  const block = libRs.match(/struct\s+MusicPayload\s*\{([^}]*)\}/);
+  assert.ok(block, 'MusicPayload struct not found in lib.rs');
+  assert.match(block[1], /\bon\s*:\s*bool/);
+  assert.ok(jsSources.includes("emit('music-changed', { on:"), 'bubble emits { on }');
+});
+
+test('browser args: every window uses the same WebView2 flags (mixed flags fail to open)', () => {
+  const conf = JSON.parse(read('src-tauri/tauri.conf.json'));
+  const bubble = conf.app.windows.find((w) => w.label === 'bubble');
+  const rs = libRs.match(/const BROWSER_ARGS: &str =\s*"([^"]*)"/);
+  assert.ok(rs, 'BROWSER_ARGS const not found in lib.rs');
+  assert.equal(bubble.additionalBrowserArgs, rs[1]);
+  assert.match(rs[1], /--autoplay-policy=no-user-gesture-required/);
+  // every window built in Rust passes them
+  const builders = (libRs.match(/WebviewWindowBuilder::new/g) || []).length;
+  const uses = (libRs.match(/\.additional_browser_args\(BROWSER_ARGS\)/g) || []).length;
+  assert.equal(uses, builders);
 });

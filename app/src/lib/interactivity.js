@@ -2,8 +2,8 @@
 //
 // Default: the window ignores all mouse input (clicks land on whatever is underneath).
 // A poller watches the global cursor; after dwelling over the bubble for `dwellMs`
-// the window turns interactive: cursor switches (body.hot) and a left-press anywhere
-// starts dragging the window. Leaving the bubble reverts to click-through.
+// the window turns interactive: cursor switches (body.hot) and a left-press on the bubble
+// or its text (.stage, .textblock) starts dragging the window. Leaving the bubble reverts to click-through.
 //
 // During a break the bubble goes fullscreen and must be fully interactive (exit button),
 // so the poller can be paused via setHoverDragActive(false) — which also drops
@@ -12,6 +12,13 @@
 let _win = null;
 let hoverActive = true;   // false while the break overlay owns the screen
 let hot = false;          // module-scoped: shared by the poller, the drag handler, and pausing
+let pinned = false;       // edit mode / a dialog is open: stay interactive, no window drag
+
+// Pin the hot state: the bubble stays interactive when the cursor leaves, and a press
+// no longer drags the window (edit mode drags text instead; dialogs need their clicks).
+export function setPinned(on) {
+  pinned = on;
+}
 
 export async function setHoverDragActive(active) {
   hoverActive = active;
@@ -37,7 +44,7 @@ export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 1
   // and the DOM 'dblclick' never fires, so we time consecutive mousedowns ourselves.
   let lastDown = 0;
   window.addEventListener('mousedown', (e) => {
-    if (!hot || e.button !== 0) return;
+    if (!hot || pinned || e.button !== 0 || !e.target.closest('.stage, .textblock')) return;
     const now = Date.now();
     if (now - lastDown < 350) {
       lastDown = 0;
@@ -71,7 +78,7 @@ export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 1
         }
       } else {
         dwellStart = 0;
-        if (hot && now - lastInside > leaveMs) {
+        if (hot && !pinned && now - lastInside > leaveMs) {
           hot = false;
           document.body.classList.remove('hot');
           await _win.setIgnoreCursorEvents(true);

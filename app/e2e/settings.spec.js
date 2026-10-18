@@ -57,3 +57,46 @@ test('Save persists settings to localStorage', async ({ page }) => {
   // 01:30 work (hh:mm) -> 1h30m -> 5400s
   expect(parsed.timers.workSeconds).toBe(5400);
 });
+
+test('Behavior: the bubble dialog choices can be changed back and are saved', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('breathpause.settings',
+    JSON.stringify({ behavior: { hideNoticeOff: true, editAutoSave: true } })));
+  await page.goto('/settings.html');
+  await page.locator('.rail .navitem', { hasText: 'Behavior' }).click();
+  const remind = page.getByRole('checkbox', { name: /keeps running in the tray/ });
+  const autosave = page.getByRole('checkbox', { name: /Save changes without asking/ });
+  await expect(remind).not.toBeChecked();      // "Don't show again" was chosen
+  await expect(autosave).toBeChecked();        // "Always save" was chosen
+  await remind.check();
+  await autosave.uncheck();
+  await page.getByRole('button', { name: 'Save' }).click();
+  const b = await page.evaluate(() => JSON.parse(localStorage.getItem('breathpause.settings')).behavior);
+  expect(b.hideNoticeOff).toBe(false);
+  expect(b.editAutoSave).toBe(false);
+});
+
+test('Behavior: breathing music offers every sound and hold style, previews, and saves', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/settings.html');
+  await page.locator('.rail .navitem', { hasText: 'Behavior' }).click();
+  const sound = page.getByLabel('Sound', { exact: true }), hold = page.getByLabel('Hold style');
+  await expect(sound.locator('option')).toHaveCount(7);
+  await expect(hold.locator('option')).toHaveCount(5);
+  await hold.selectOption('countdown');
+  await expect(page.getByText('Quiet, then three soft ticks into the next phase.')).toBeVisible();
+
+  const listen = page.getByRole('button', { name: 'Listen' });
+  await listen.click();
+  await expect(page.getByRole('button', { name: 'Stop' })).toHaveAttribute('aria-pressed', 'true');
+  await sound.selectOption('kalimba');                      // switching while previewing restarts it
+  await page.waitForTimeout(800);
+  await page.getByRole('button', { name: 'Stop' }).click();
+
+  await page.getByRole('checkbox', { name: /Play breathing music/ }).check();
+  await page.getByLabel('Volume').fill('30');
+  await page.getByRole('button', { name: 'Save' }).click();
+  const m = await page.evaluate(() => JSON.parse(localStorage.getItem('breathpause.settings')).music);
+  expect(m).toMatchObject({ on: true, sound: 'kalimba', hold: 'countdown', volume: 0.3 });
+  expect(errors).toEqual([]);
+});

@@ -15,6 +15,7 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
-body.hot, body.hot * {
+/* Only the bubble and its text drag (and double-click to settings); controls keep their own cursor. */
+body.hot .stage, body.hot .stage *, body.hot .textblock, body.hot .textblock * {
   cursor: move;
 }
