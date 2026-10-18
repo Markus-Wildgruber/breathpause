@@ -22,6 +22,13 @@ function modeDefaults(overrides) {
     posTop: 40,                 // distance from top edge (px)
     textOffsetX: 0,             // text block horizontal offset (px)
     textOffsetY: 0,             // text block vertical offset (px)
+    // Per-line tweaks from the bubble's edit mode, on top of the block offset/color.
+    labelOffsetX: 0,
+    labelOffsetY: 0,
+    subOffsetX: 0,
+    subOffsetY: 0,
+    labelColor: '',             // '' = use textColor
+    subColor: '',
     ...overrides,
   };
 }
@@ -70,6 +77,8 @@ export const DEFAULT_SETTINGS = {
     autoStart: true,
     startOnBoot: false,
     chimeOnTransitions: false,
+    hideNoticeOff: false,       // "keeps running in the tray" notice dismissed for good
+    editAutoSave: false,        // Esc in bubble edit mode saves without asking
   },
   // Global (OS-registered) hotkeys. Ctrl+Alt+Shift+<key>: practically never taken by
   // other apps, and unlike plain Ctrl+Alt it can't collide with AltGr characters on

@@ -40,6 +40,21 @@ test('defaults carry the current schema (in/out labels + text offsets)', () => {
   }
 });
 
+test('per-line text fields (bubble edit mode) default to no offset and the shared color', () => {
+  setStored({ appearance: { work: { textColor: '#FF0000' } }, behavior: { startOnBoot: true } });
+  const s = loadSettings();
+  for (const m of MODES) {
+    for (const k of ['labelOffsetX', 'labelOffsetY', 'subOffsetX', 'subOffsetY']) {
+      assert.equal(s.appearance[m][k], 0);
+    }
+    assert.equal(s.appearance[m].labelColor, '');   // '' = use textColor
+    assert.equal(s.appearance[m].subColor, '');
+  }
+  assert.equal(s.behavior.startOnBoot, true);       // stored wins
+  assert.equal(s.behavior.hideNoticeOff, false);    // new flags defaulted
+  assert.equal(s.behavior.editAutoSave, false);
+});
+
 test('corrupted JSON falls back to defaults', () => {
   setStored('{ this is not json');
   const s = loadSettings();

@@ -419,6 +419,7 @@
     raf = requestAnimationFrame(loop);
 
     let unlisten = null;
+    let unlistenBubble = null;
     let unlistenMove = null;
     if (inTauri) {
       (async () => {
@@ -434,6 +435,7 @@
 
         const { listen } = await import("@tauri-apps/api/event");
         unlisten = await listen("pattern-editor-saved", refreshPatterns);
+        unlistenBubble = await listen("bubble-settings-saved", refreshBubbleEdits);
       })();
     }
 
@@ -444,6 +446,7 @@
     return () => {
       cancelAnimationFrame(raf);
       unlisten?.();
+      unlistenBubble?.();
       unlistenMove?.();
       window.removeEventListener("focus", refreshPatterns);
     };
@@ -457,6 +460,20 @@
     const ids = new Set(fresh.patterns.map((p) => p.id));
     if (!ids.has(s.timers.workPattern)) s.timers.workPattern = fresh.timers.workPattern;
     if (!ids.has(s.timers.breakPattern)) s.timers.breakPattern = fresh.timers.breakPattern;
+  }
+
+  // The bubble's edit mode saved text tweaks (and its dialog flags): take them over, so
+  // saving this window afterwards doesn't write the old values back.
+  function refreshBubbleEdits() {
+    const fresh = loadSettings();
+    for (const k of ["labelOffsetX", "labelOffsetY", "subOffsetX", "subOffsetY",
+                     "labelColor", "subColor", "labelSize", "subSize", "sizePx", "opacity",
+                     "showPhaseLabel", "showPhaseCountdown", "showPomodoro", "showSessions"]) {
+      s.appearance.work[k] = fresh.appearance.work[k];
+    }
+    s.skinColors = fresh.skinColors;
+    s.behavior.hideNoticeOff = fresh.behavior.hideNoticeOff;
+    s.behavior.editAutoSave = fresh.behavior.editAutoSave;
   }
 
   function previewSize(px) {
@@ -866,8 +883,10 @@
                   >
                       <div
                         class="ts-big"
-                        style:color={ap.textColor}
+                        style:color={ap.labelColor || ap.textColor}
                         style:font-size="{ap.labelSize * textScale()}px"
+                        style:transform="translate({(ap.labelOffsetX ?? 0) * skinScale()}px, {(ap.labelOffsetY ??
+                          0) * skinScale()}px)"
                       >
                         {[
                           ap.showPhaseLabel && s.text.phases.in,
@@ -878,8 +897,10 @@
                       </div>
                       <div
                         class="ts-small"
-                        style:color={ap.textColor}
+                        style:color={ap.subColor || ap.textColor}
                         style:font-size="{ap.subSize * textScale()}px"
+                        style:transform="translate({(ap.subOffsetX ?? 0) * skinScale()}px, {(ap.subOffsetY ??
+                          0) * skinScale()}px)"
                       >
                         {[ap.showPomodoro && "24:18", ap.showSessions && "[2]"]
                           .filter(Boolean)
