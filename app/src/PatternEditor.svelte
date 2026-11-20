@@ -159,10 +159,10 @@
   :global(body){margin:0;overflow:hidden}
 
   .win{--card:#1C1C1E;--pane:#161619;
-       --fore:#F2F2F2;--muted:#9aa0aa;--accent:#4FC3F7;--accentFg:#06222c;
+       --fore:#F2F2F2;--muted:#9aa0aa;--accent:#4d9abf;--accentFg:#06222c;
        --line:rgba(255,255,255,.10);--field:rgba(255,255,255,.07);--cardbg:rgba(255,255,255,.04)}
   .win[data-theme="light"]{--card:#f3f3f6;--pane:#fbfbfd;
-       --fore:#1a1a1f;--muted:#5a5a63;--accent:#0a6cc9;--accentFg:#ffffff;
+       --fore:#1a1a1f;--muted:#5a5a63;--accent:#4d9abf;--accentFg:#06222c;
        --line:rgba(0,0,0,.10);--field:#ffffff;--cardbg:#ffffff}
 
   .win{height:100vh;display:flex;flex-direction:column;overflow:hidden;
@@ -198,9 +198,10 @@
 
   .timeline{display:flex;height:34px;border-radius:8px;overflow:hidden;margin:8px 0 0}
   .tphase{display:flex;align-items:center;justify-content:center;min-width:0;overflow:hidden}
-  .tphase-in{background:#4FC3F7;color:#06222c}
-  .tphase-out{background:#81C784;color:#1a3a1f}
-  .tphase-hold{background:#FFD54F;color:#3a2f00}
+  /* Phase colors = drawbreath's line ink, same as Settings › Patterns. */
+  .tphase-in{background:#d4577f;color:#14141a}
+  .tphase-out{background:#4d9abf;color:#14141a}
+  .tphase-hold{background:#8a827a;color:#14141a}
   .tphase-label{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;
     text-overflow:ellipsis;padding:0 4px}
   .timeline-labels{display:flex;margin:3px 0 6px}

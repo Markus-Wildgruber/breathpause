@@ -32,6 +32,13 @@ test('hover buttons show a pointer cursor; only the bubble shows move', async ({
   expect(await page.locator('.stage').evaluate((el) => getComputedStyle(el).cursor)).toBe('move');
 });
 
+test('edit mode opens with the bubble selected', async ({ page }) => {
+  await edit(page);
+  await expect(page.locator('.stage.sel')).toBeVisible();
+  await expect(page.getByRole('slider', { name: 'Bubble size' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Hex color' })).not.toHaveValue('');
+});
+
 test('edit mode: the bubble is not draggable, it is selectable', async ({ page }) => {
   await edit(page);
   expect(await page.locator('.stage').evaluate((el) => getComputedStyle(el).cursor)).toBe('pointer');
@@ -51,10 +58,14 @@ test('edit mode: the bubble is not draggable, it is selectable', async ({ page }
     expect(b.x).toBeGreaterThanOrEqual(side.x);
     expect(b.x + b.width).toBeLessThanOrEqual(side.x + side.width);
   }
-  await page.getByRole('button', { name: 'Bubble color' }).click();
-  await page.getByRole('button', { name: '#EF476F' }).click();
-  // The skin is re-mounted recolored (hue-shifted from its anchor, so just "changed").
-  await expect(page.locator('.preset.on')).toHaveAttribute('title', '#EF476F');
+  // Hex field sits right in the side panel, below the swatch.
+  await page.getByRole('textbox', { name: 'Hex color' }).fill('#EF476F');
+  // The skin is re-mounted recolored (hue-shifted from its anchor, so check the swatch).
+  await expect(page.locator('.side .swatch')).toHaveCSS('background-color', 'rgb(239, 71, 111)');
+  // The swatch is the color input itself: clicking it opens the picker directly.
+  await page.getByLabel('Bubble color').fill('#123456');
+  await expect(page.locator('.side .swatch')).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await expect(page.getByRole('textbox', { name: 'Hex color' })).toHaveValue('#123456');
 });
 
 test('edit mode: select a line, change its size and color', async ({ page }) => {
@@ -72,30 +83,27 @@ test('edit mode: select a line, change its size and color', async ({ page }) => 
   const after = await page.locator('.textblock .label').evaluate((el) => el.style.fontSize);
   expect(after).not.toBe(before);
 
-  // Color: preset, then hex entry.
-  await page.getByRole('button', { name: 'Text color' }).click();
-  await page.getByRole('button', { name: '#EF476F' }).click();
-  await expect(page.locator('.textblock .label')).toHaveCSS('color', 'rgb(239, 71, 111)');
+  // Color: hex entry, then the swatch (a native color input).
   await page.getByRole('textbox', { name: 'Hex color' }).fill('#0a0');
   await expect(page.locator('.textblock .label')).toHaveCSS('color', 'rgb(0, 170, 0)');
-
-  // Custom picker: the first tile of the color grid is a native color input.
-  const custom = page.locator('.presets > :first-child input[type=color]');
-  await expect(custom).toHaveAttribute('aria-label', 'Custom color');
-  await custom.fill('#123456');
+  await page.getByLabel('Text color').fill('#123456');
   await expect(page.locator('.textblock .label')).toHaveCSS('color', 'rgb(18, 52, 86)');
 
   expect(errors).toEqual([]);
 });
 
-test('edit mode: the color panel for the timer line stays fully on screen', async ({ page }) => {
+test('edit mode: the color controls for the timer line stay fully on screen', async ({ page }) => {
   await edit(page);
   await page.locator('.textblock .pomo').click();
-  await page.getByRole('button', { name: 'Text color' }).click();
-  const panel = await page.locator('.color-panel').boundingBox();
   const vw = await page.evaluate(() => innerWidth);
-  expect(panel.x).toBeGreaterThanOrEqual(0);
-  expect(panel.x + panel.width).toBeLessThanOrEqual(vw);
+  for (const sel of ['.side', '.side .hex']) {
+    const b = await page.locator(sel).boundingBox();
+    expect(b.x, sel).toBeGreaterThanOrEqual(0);
+    expect(b.x + b.width, sel).toBeLessThanOrEqual(vw);
+  }
+  // The hex field fits inside the side panel.
+  const side = await page.locator('.side').boundingBox(), hex = await page.locator('.side .hex').boundingBox();
+  expect(hex.x + hex.width).toBeLessThanOrEqual(side.x + side.width);
 });
 
 test('edit mode: a small bubble scaled up (unsaved) keeps its controls on screen', async ({ page }) => {
@@ -103,9 +111,8 @@ test('edit mode: a small bubble scaled up (unsaved) keeps its controls on screen
   await page.locator('.stage').click();
   const range = page.getByRole('slider', { name: 'Bubble size' });
   await range.fill(await range.getAttribute('max'));
-  await page.getByRole('button', { name: 'Bubble color' }).click();
   const vw = await page.evaluate(() => innerWidth);
-  for (const sel of ['.stage', '.side', '.color-panel']) {
+  for (const sel of ['.stage', '.side']) {
     const b = await page.locator(sel).boundingBox();
     expect(b.x, sel).toBeGreaterThanOrEqual(0);
     expect(b.x + b.width, sel).toBeLessThanOrEqual(vw);

@@ -10,7 +10,7 @@ export default defineConfig({
   fullyParallel: true,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:5175',
     headless: true,
   },
   projects: [
@@ -18,7 +18,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
-    url: 'http://localhost:5173',
+    url: 'http://localhost:5175',
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

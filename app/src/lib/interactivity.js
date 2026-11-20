@@ -13,6 +13,15 @@ let _win = null;
 let hoverActive = true;   // false while the break overlay owns the screen
 let hot = false;          // module-scoped: shared by the poller, the drag handler, and pausing
 let pinned = false;       // edit mode / a dialog is open: stay interactive, no window drag
+let dragging = false;     // the user pressed on the bubble to drag it; cleared by endUserDrag()
+
+// Window moves count as the user's drag only between a press on the bubble and endUserDrag()
+// (the drag has settled, or the app lays the window out itself). The OS runs the drag loop
+// after startDragging(), so the page sees no mouseup to end it.
+export const userDragging = () => dragging;
+export function endUserDrag() {
+  dragging = false;
+}
 
 // Pin the hot state: the bubble stays interactive when the cursor leaves, and a press
 // no longer drags the window (edit mode drags text instead; dialogs need their clicks).
@@ -52,6 +61,7 @@ export async function setupHoverDrag({ dwellMs = 1000, leaveMs = 400, pollMs = 1
       return;
     }
     lastDown = now;
+    dragging = true;
     _win.startDragging();
   });
 

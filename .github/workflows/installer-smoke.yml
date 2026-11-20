@@ -42,6 +42,10 @@ jobs:
 
       - name: Build NSIS installer
         working-directory: app
+        env:
+          # createUpdaterArtifacts needs the updater key to build (see release.yml)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --bundles nsis
 
       - name: Install silently
@@ -170,6 +174,10 @@ jobs:
 
       - name: Build universal app + dmg (same as release)
         working-directory: app
+        env:
+          # createUpdaterArtifacts needs the updater key to build (see release.yml)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --target universal-apple-darwin --bundles app,dmg
 
       - name: Verify the binary is universal

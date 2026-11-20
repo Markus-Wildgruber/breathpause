@@ -33,6 +33,8 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # Screen capture for the break overlay's frosted background. Desktop (win/mac) only:
 # Linux needs extra system libs and is only used for browser-based UI dev here.

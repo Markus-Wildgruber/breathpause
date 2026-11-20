@@ -4,9 +4,7 @@
 
 # BreathPause
 
-**An always-on-top breathing bubble that paces your focus sessions.**
-
-[Features](#features) · [Install](#install) · [Development](#development) · [Releases](https://github.com/Markus-Wildgruber/breathpause/releases)
+**A small breathing bubble that sits on your screen while you work.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1f6feb)
@@ -14,91 +12,47 @@
 
 </div>
 
-## What is BreathPause
+BreathPause keeps a little bubble in the corner of your screen. It breathes slowly while you focus, and when your pomodoro timer runs out it fills the screen and walks you through a short breathing break. Then it's back to work.
 
-BreathPause is a native always-on-top breathing bubble for Windows and macOS. It sits in the corner of your screen and breathes quietly while you work, then takes over the screen with a frosted breathing break when the pomodoro timer runs out.
+## What you can do with it
 
-Built with **Tauri v2 + Svelte**: a small Rust backend hosts the system webview (WebView2 on Windows, WKWebView on macOS) — no Electron, no Node.js runtime, no background services.
+- Breathe along with the bubble, or just let it remind you to slow down
+- Set your own work and break times (25 / 5 minutes to start)
+- Make your own breathing patterns: inhale, exhale, hold, as long as you like
+- Pick a look: an orb, a sleepy seal, a bear, a jellyfish, or your own SVG
+- Play soft breathing music that follows the pattern
+- Use hotkeys to pause, skip or hide the bubble from anywhere
 
-## Features
-
-- **Breathing + pomodoro** — work / break / long-break cycle; the bubble breathes quietly in the corner during work, then guides your breathing on breaks.
-- **Custom breathing patterns** — build your own from inhale / exhale / hold phases with per-second timing (supports decimals like 5.5 s). Separate patterns for work and break.
-- **Configurable timers** — default 25-minute work, 5-minute break, 15-minute long break with configurable long-break interval.
-- **Frosted break overlay** — the break takes over the screen with a blurred snapshot of your desktop; press Esc to leave early.
-- **Skin system** — swap the bubble appearance with bundled skins (orb, sleepy seal, cute bear, sweet jelly) or import your own as an SVG or zipped folder, recolored to taste.
-- **Appearance per mode** — separate size, opacity, position, colors, and font for work and break modes.
-- **Global hotkeys** — system-wide shortcuts for start/stop, pause/resume, skip, open settings, and show/hide; customizable by pressing the keys.
-- **Start on boot** — optional autostart at login.
-- **System tray** — pause, open settings, or quit from the tray icon. Hiding the bubble pauses the session.
-- **Chime on transitions** — optional audio cue when work/break segments switch.
-- **Local-first** — settings live in localStorage; no telemetry, no network calls.
-
-## Platform Status
-
-| Platform | Status | Notes |
-|---|---|---|
-| **Windows** 10 / 11 | Working — alpha | Requires WebView2 (pre-installed on Windows 11; auto-bootstrapped on Windows 10 by the installer). |
-| **macOS** | Built — CI-tested | Universal (Apple Silicon + Intel) `.dmg`; launch, rendering and settings are verified on CI runners. Unsigned, and not yet verified on physical hardware. |
+Everything stays on your computer. The only thing BreathPause sends out is a once-a-day check for a new version, and you can turn that off in Settings.
 
 ## Install
 
-Download the latest release from [GitHub Releases](https://github.com/Markus-Wildgruber/breathpause/releases).
+Grab the latest version from the [BreathPause website](https://markus-wildgruber.github.io/breathpause/) or the [Releases page](https://github.com/Markus-Wildgruber/breathpause/releases).
 
-### Windows
+**Windows:** run `breathpause_x.y.z_x64-setup.exe`. No admin rights needed. If you'd rather not install anything, the `standalone.exe` runs on its own.
 
-**Installer:** Run `breathpause_x.y.z_x64-setup.exe` — installs per-user, no admin rights needed.
+**macOS:** open the `.dmg` and drag BreathPause into Applications.
 
-**Standalone:** Download `breathpause_x.y.z_x64-standalone.exe`, drop it anywhere, and run it directly — no installation required.
+BreathPause isn't code-signed yet, so the first launch shows a warning. On Windows, click **More info → Run anyway**. On a Mac, right-click the app and choose **Open**.
 
-The installer and executable are unsigned (alpha), so Windows SmartScreen may show an "unknown publisher" prompt. Click **More info → Run anyway** to proceed.
+**Updates:** installed copies update themselves from Settings › About. The standalone version tells you when a new one is out and links to the download.
 
-### macOS
+## Getting started
 
-**Installer:** Open `breathpause_x.y.z_universal.dmg` and drag BreathPause into Applications. Runs on both Apple Silicon and Intel.
+Start BreathPause and the bubble appears in the top-right corner. Hover over it to edit, open settings or hide it. The tray icon has the rest: pause, music, settings and exit.
 
-The app is unsigned (alpha), so Gatekeeper will refuse to open it on first launch. Either **right-click the app → Open**, then confirm in the dialog, or clear the quarantine flag from a terminal:
+## For developers
 
-```sh
-xattr -dr com.apple.quarantine /Applications/breathpause.app
-```
-
-## Usage
-
-1. Launch BreathPause — a translucent orb appears in the top-right corner and starts breathing.
-2. The bubble breathes quietly during the work segment, then switches to break mode automatically.
-3. Right-click the system tray icon to pause, open settings, or quit.
-4. Left-click the tray icon or bubble to show / hide.
-5. Open **Settings** from the tray to adjust appearance, patterns, timers, skins, and behavior (hotkeys, start-on-boot, chime).
-6. All settings take effect when you click **Save**.
-
-## Development
-
-Requirements: [Rust](https://rustup.rs) + [Node.js LTS](https://nodejs.org).
+You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org).
 
 ```bash
 cd app
 npm install
-
-# Run core logic tests
-npm test
-
-# Dev server in the browser (no Tauri window)
-npm run dev
-
-# Dev with live Tauri window
-npx tauri dev
-
-# Production Windows build (cross-compile from Linux/macOS via cargo-xwin)
-cargo install cargo-xwin
-npx tauri build --target x86_64-pc-windows-msvc --runner cargo-xwin
+npm test          # unit tests
+npx tauri dev     # run the app
 ```
 
-CI runs `npm test` and `npm run build` on every push.
-
-## Contributing
-
-Bug reports, breathing-pattern ideas, and skin designs are welcome — open an issue or a PR.
+Built with Tauri v2 and Svelte. Ideas, bug reports and new skins are welcome. Just open an issue or a pull request.
 
 ## License
 

@@ -1,14 +1,25 @@
 name: Release
 
-# Builds signed-ready installers and attaches them to a GitHub Release.
-# Triggered by pushing a version tag, e.g.:  git tag v0.1.0 && git push origin v0.1.0
-# The tag is the single source of truth for the version (see scripts/set-version.mjs).
+# Builds signed-ready installers and attaches them to a draft GitHub Release.
+# Start it either way:
+#   - Actions > Release > Run workflow, enter the version (e.g. 0.2.0): checks that it's ready
+#     (scripts/release.mjs), creates the tag and builds, all in this one run. (A tag pushed by
+#     a workflow can't start another workflow, so the tag is made here, not in a separate one.)
+#   - locally: npm run release -- 0.2.0 --push   (same checks, then pushes the tag)
+# The tag is the single source of truth for the version (see scripts/set-version.mjs), and
+# release-notes/<tag>.md becomes the release notes the website shows.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 0.2.0 (release-notes/v<version>.md must exist on main)'
+        required: true
 
-# tauri-action needs write access to create the release and upload assets.
+# tauri-action needs write access to create the release and upload assets; the Release
+# button also pushes the tag.
 permissions:
   contents: write
 
@@ -17,7 +28,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Nothing builds unless the version is ready; the website shows these release notes.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check the version and create its tag (Release button)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/release.mjs "$VERSION" --push
+
+      - name: Check the release notes (tag pushed by hand)
+        if: github.event_name == 'push'
+        run: |
+          f="release-notes/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$f" ] || ! grep -qE '^\s*[-*]\s+\S' "$f"; then
+            echo "::error::$f is missing or has no bullet points. Add the notes, delete the tag, and release with the Release button or: npm run release -- ${GITHUB_REF_NAME#v} --push"
+            exit 1
+          fi
+
+      - id: tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          v="${VERSION:-${GITHUB_REF_NAME#v}}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: check
     strategy:
       fail-fast: false
       matrix:
@@ -30,11 +81,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Derive version from tag
-        id: version
-        shell: bash
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        with:
+          ref: ${{ needs.check.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -52,9 +100,9 @@ jobs:
         with:
           workspaces: app/src-tauri
 
-      - name: Sync version to ${{ steps.version.outputs.version }}
+      - name: Sync version to ${{ needs.check.outputs.version }}
         shell: bash
-        run: node scripts/set-version.mjs "${{ steps.version.outputs.version }}"
+        run: node scripts/set-version.mjs "${{ needs.check.outputs.version }}"
 
       - name: Install frontend deps
         working-directory: app
@@ -63,14 +111,19 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (minisign): signs the update bundles and lets tauri-action write
+          # latest.json, which installed copies check. Separate from code signing below.
+          # LOSING THIS KEY strands every installed copy: they only accept updates signed with it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # --- Signing (unset for now → unsigned builds) ---
           # Windows (Azure Trusted Signing or a .pfx) and macOS (Developer ID +
           # notarization) secrets get added here later. Until then, installers
           # work but trigger SmartScreen / Gatekeeper warnings.
         with:
           projectPath: app
-          tagName: ${{ github.ref_name }}
-          releaseName: 'breathpause ${{ steps.version.outputs.version }}'
+          tagName: ${{ needs.check.outputs.tag }}
+          releaseName: 'breathpause ${{ needs.check.outputs.version }}'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
@@ -85,6 +138,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           raw=$(ls app/src-tauri/target/release/*.exe | head -1)
-          out="breathpause_${{ steps.version.outputs.version }}_x64-standalone.exe"
+          out="breathpause_${{ needs.check.outputs.version }}_x64-standalone.exe"
           cp "$raw" "$out"
-          gh release upload "${{ github.ref_name }}" "$out" --clobber
+          gh release upload "${{ needs.check.outputs.tag }}" "$out" --clobber
+
+  # The draft gets release-notes/<tag>.md as its notes (written for users, reviewed in the PR;
+  # the check job made sure it exists). Publish the draft when it looks right: the website
+  # (pages.yml) and the app's "What's new" then show these notes.
+  # Also when one platform's build failed: whatever was uploaded still gets its notes.
+  notes:
+    needs: [check, build]
+    if: ${{ !cancelled() && needs.check.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+
+      - name: Fill the draft's notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::warning::No draft release for $TAG: every build failed before uploading."
+            exit 0
+          fi
+          gh release edit "$TAG" --notes-file "release-notes/$TAG.md"

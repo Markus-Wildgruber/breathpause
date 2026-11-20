@@ -80,6 +80,7 @@ test('Behavior: breathing music offers every sound and hold style, previews, and
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/settings.html');
   await page.locator('.rail .navitem', { hasText: 'Behavior' }).click();
+  await page.getByRole('button', { name: 'Sound', exact: true }).click();   // Behavior sub-tab
   const sound = page.getByLabel('Sound', { exact: true }), hold = page.getByLabel('Hold style');
   await expect(sound.locator('option')).toHaveCount(7);
   await expect(hold.locator('option')).toHaveCount(5);
@@ -99,4 +100,41 @@ test('Behavior: breathing music offers every sound and hold style, previews, and
   const m = await page.evaluate(() => JSON.parse(localStorage.getItem('breathpause.settings')).music);
   expect(m).toMatchObject({ on: true, sound: 'kalimba', hold: 'countdown', volume: 0.3 });
   expect(errors).toEqual([]);
+});
+
+test('Appearance: Live update is on by default, saves appearance changes at once and Cancel puts them back', async ({ page }) => {
+  await page.goto('/settings.html');
+  const sizePx = () => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('breathpause.settings') || '{}').appearance?.work?.sizePx);
+  await expect(page.getByRole('button', { name: 'Live update' })).toHaveAttribute('aria-pressed', 'true');   // on by default
+  await page.getByRole('slider', { name: 'Size', exact: true }).fill('300');
+  await expect.poll(sizePx).toBe(300);               // written without pressing Save
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect.poll(sizePx).toBe(200);               // back to what was saved before
+});
+
+test('Appearance: a typed hex color is taken only when complete, Reset is undone by Cancel', async ({ page }) => {
+  await page.goto('/settings.html');
+  const saved = () => page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('breathpause.settings') || '{}');
+    return [s.skinColors?.orb, s.appearance?.work?.skin, s.music?.volume];
+  });
+  const hex = page.getByLabel('Bubble color hex');
+  await hex.fill('#12');                             // half-typed
+  await hex.blur();
+  await page.getByRole('slider', { name: 'Size', exact: true }).fill('210');   // something to wait on
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('breathpause.settings') || '{}').appearance?.work?.sizePx)).toBe(210);
+  expect((await saved())[0]).toBeUndefined();
+  await hex.fill('12ab9f');
+  await hex.blur();
+  await expect.poll(async () => (await saved())[0]).toBe('#12AB9F');
+  await hex.fill('');                                // empty = the skin's own color
+  await hex.blur();
+  await expect.poll(async () => (await saved())[0]).toBeUndefined();
+  await expect(hex).not.toHaveValue('');
+  await page.getByRole('button', { name: 'Reset', exact: true }).click();   // the footer's, not "Reset color"
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('breathpause.settings') || '{}').appearance?.work?.sizePx)).toBe(200);
 });

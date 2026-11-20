@@ -1,0 +1,53 @@
+name: Website
+
+# Builds the GitHub Pages site (site/template.html + the published releases, see
+# scripts/build-site.mjs) and deploys it to https://markus-wildgruber.github.io/breathpause/.
+# Runs whenever a release is published, edited or deleted, when the site changes on main,
+# or by hand.
+on:
+  release:
+    types: [published, edited, deleted]
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'scripts/build-site.mjs'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; a newer release replaces a still-running build.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build the page from the releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/build-site.mjs _site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
