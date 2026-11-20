@@ -388,6 +388,8 @@
   let apTheme = $state("#888888"); // current skin's authored anchor, for the swatch baseline
 
   // A text line's color as the bubble shows it: its own, else the shared default.
+  const lineFont = (line) => ap[line + "Font"] || ap.font;
+  let apLine = $state("label"); // Text tab: 'label' = top line, 'sub' = bottom line
   const lineColor = (line) => ap[line + "Color"] || ap.textColor || "#eef6ff";
 
   $effect(() => {
@@ -412,14 +414,19 @@
     };
   });
 
-  // Live update: while on, appearance changes are saved and shown in the bubble right away.
-  // Only appearance, skin colors and skins are written; other unsaved changes wait for Save.
-  // Cancel puts back what was saved when it was first switched on.
-  let live = $state(false);
-  let liveBase = null,
-    livePushed = "";
+  // Live update (on by default): everything the bubble can change too — appearance, skin colors,
+  // skins, music — is saved and shown in the bubble right away. The rest waits for Save.
+  // Cancel puts back what was saved when the window opened.
   const livePart = (x) =>
-    JSON.stringify({ appearance: x.appearance, skinColors: x.skinColors, customSkins: x.customSkins });
+    JSON.stringify({
+      appearance: x.appearance,
+      skinColors: x.skinColors,
+      customSkins: x.customSkins,
+      music: x.music,
+    });
+  let live = $state(true);
+  let liveBase = livePart(loadSettings()),
+    livePushed = liveBase; // what the bubble has; "" forces the next push
   async function pushAppearance(json) {
     saveSettings({ ...loadSettings(), ...JSON.parse(json) });
     livePushed = json;
@@ -438,7 +445,7 @@
   }
   function toggleLive() {
     live = !live;
-    if (live) liveBase ??= livePart(loadSettings());
+    if (live) livePushed = ""; // switched on: send the current values over
   }
   $effect(() => {
     if (!live) return;
@@ -566,44 +573,93 @@
   // the values it changed, so saving this window later doesn't write old values back, while
   // anything changed here and not yet saved stays as it is.
   function refreshBubbleEdits({ payload }) {
-    if (payload) applyBubbleChanges(s, payload);
+    if (!payload) return;
+    applyBubbleChanges(s, payload);
+    if (live) livePushed = livePart(s); // the bubble saved it itself: nothing to send back
   }
 
-  function previewSize(px) {
-    return Math.round(Math.max(12, px * 0.3)); // +20% of the old /4 scale; low floor so small sizes still shrink
+  // Appearance preview: the bubble is built at its real size, with the bubble window's own text
+  // rules, and scaled down as one piece — so sizes and offsets keep their true proportions.
+  const screenH = () => (typeof window !== "undefined" && window.screen?.availHeight) || 1080;
+  // Real skin diameter in px (break: a share of the screen height).
+  function miniSize() {
+    return mode === "break" ? ((ap.sizePct ?? 45) / 100) * screenH() : ap.sizePx || 200;
   }
-  // Preview orb diameter (px): work scales the pixel size, break scales the screen-% size.
-  function previewDiameter() {
-    return mode === "break"
-      ? Math.round(Math.max(40, ((ap.sizePct ?? 45) / 100) * 150))
-      : previewSize(ap.sizePx);
+  // Shown diameter grows with the size setting, within what the preview column can hold.
+  function miniScale() {
+    const shown =
+      mode === "break"
+        ? Math.max(40, (ap.sizePct ?? 45) * 1.5)
+        : 60 + ((ap.sizePx - BUBBLE_RANGE[0]) / (BUBBLE_RANGE[1] - BUBBLE_RANGE[0])) * 110;
+    return shown / miniSize();
   }
-  // Skin's preview scale — used to move the skin by the text offset so the relative
-  // position reads true (matches the skin's own downscale).
-  function skinScale() {
-    if (mode === "break") {
-      const h = (typeof window !== "undefined" && window.screen?.availHeight) || 1080;
-      return 150 / h;
-    }
-    return previewDiameter() / (ap.sizePx || 200);
-  }
-  // Text's preview scale — kept larger than the skin so the label stays legible.
-  function textScale() {
-    if (mode === "break") {
-      const h = (typeof window !== "undefined" && window.screen?.availHeight) || 1080;
-      return 240 / h;
-    }
-    return 0.4;
-  }
+  // Break only: at true scale the text would be a couple of pixels high, so it is shown larger
+  // there (and its position is then approximate).
+  const textBoost = () => (mode === "break" ? 1.6 : 1);
 </script>
 
 {#snippet lineControls(line, title)}
-  <div class="ap-line">
-    <span class="ch">{title}</span>
-    {#each LINE_PARTS[line] as [key, name] (key)}
-      <label class="chk"><input type="checkbox" bind:checked={ap[key]} />{name}</label>
-    {/each}
+  <div class="aprow">
+    <span class="aplabel">Font</span>
+    <div class="fontdd" class:open={fontOpen}>
+      <button
+        type="button"
+        class="ctl fontdd-btn"
+        style:font-family={lineFont(line)}
+        onclick={() => {
+          fontOpen = !fontOpen;
+          fontSearch = "";
+        }}
+      >
+        <span class="fontdd-cur">{lineFont(line)}</span>
+        <span class="fontdd-caret">▾</span>
+      </button>
+      {#if fontOpen}
+        <div
+          class="fontdd-backdrop"
+          role="presentation"
+          onclick={() => (fontOpen = false)}
+        ></div>
+        <div class="fontdd-panel">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="fontdd-search"
+            placeholder="Search fonts…"
+            bind:value={fontSearch}
+            autofocus
+          />
+          <div class="fontdd-list">
+            {#each fontMatches as f}
+              <div
+                class="fontdd-opt"
+                class:sel={lineFont(line) === f}
+                style:font-family={f}
+                role="button"
+                tabindex="0"
+                onclick={() => {
+                  ap[line + "Font"] = f;
+                  fontOpen = false;
+                }}
+                onkeydown={(e) =>
+                  e.key === "Enter" &&
+                  ((ap[line + "Font"] = f), (fontOpen = false))}
+              >
+                {f}
+              </div>
+            {/each}
+            {#if fontMatches.length === 0}<div class="fontdd-empty">
+                No matches
+              </div>{/if}
+          </div>
+        </div>
+      {/if}
+    </div>
   </div>
+  {#each LINE_PARTS[line] as [key, name] (key)}
+    <label class="swrow"
+      >{name}<input type="checkbox" class="sw" bind:checked={ap[key]} /></label
+    >
+  {/each}
   <div class="aprow">
     <span class="aplabel">Size</span>
     <div class="sliderwrap">
@@ -839,10 +895,6 @@
         <div class="gallery skin-gallery">
           {#each allSkins as sk (sk.id)}
             <div class="gitem skin-gitem">
-              <div class="skin-tags">
-                {#if s.appearance.work.skin === sk.id}<span class="mtag">Work</span>{/if}
-                {#if s.appearance.break.skin === sk.id}<span class="mtag brk">Break</span>{/if}
-              </div>
               {#if sk.custom}
                 <button
                   class="skin-bin"
@@ -945,43 +997,48 @@
         <div class="card preview">
           <div class="text-stage">
             <div
-              class="orb"
-              bind:this={previewBox}
-              style:width="{previewDiameter()}px"
-              style:height="{previewDiameter()}px"
-              style:opacity={ap.opacity}
-            ></div>
-            <div
-              class="text-sample"
+              class="mini"
               style:font-family={ap.font}
-              style:top="calc(50% + {8 + previewDiameter() / 2 + (ap.textOffsetY ?? 0) * skinScale()}px)"
-              style:transform="translate(-50%, 0) translate({(ap.textOffsetX ??
-                0) * skinScale()}px, 0)"
+              style:width="{miniSize()}px"
+              style:top="calc(50% - {(miniSize() * miniScale()) / 2}px)"
+              style:transform="translateX(-50%) scale({miniScale()})"
             >
               <div
-                class="ts-big"
-                style:color={lineColor("label")}
-                style:font-size="{ap.labelSize * textScale()}px"
-                style:transform="translate({(ap.labelOffsetX ?? 0) * skinScale()}px, {(ap.labelOffsetY ??
-                  0) * skinScale()}px)"
-              >
-                {[
-                  ap.showPhaseLabel && s.text.phases.in,
-                  ap.showPhaseCountdown && "4",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-              </div>
+                class="orb"
+                bind:this={previewBox}
+                style:width="{miniSize()}px"
+                style:height="{miniSize()}px"
+                style:opacity={ap.opacity}
+              ></div>
               <div
-                class="ts-small"
-                style:color={lineColor("sub")}
-                style:font-size="{ap.subSize * textScale()}px"
-                style:transform="translate({(ap.subOffsetX ?? 0) * skinScale()}px, {(ap.subOffsetY ??
-                  0) * skinScale()}px)"
+                class="mini-text"
+                style:transform="translate({ap.textOffsetX ?? 0}px, {ap.textOffsetY ?? 0}px)"
               >
-                {[ap.showPomodoro && "24:18", ap.showSessions && "[2]"]
-                  .filter(Boolean)
-                  .join("  ")}
+                <div
+                  class="ts-big"
+                  style:font-family={ap.labelFont || null}
+                  style:color={lineColor("label")}
+                  style:font-size="{ap.labelSize * textBoost()}px"
+                  style:transform="translate({ap.labelOffsetX ?? 0}px, {ap.labelOffsetY ?? 0}px)"
+                >
+                  {[
+                    ap.showPhaseLabel && s.text.phases.in,
+                    ap.showPhaseCountdown && "4",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                </div>
+                <div
+                  class="ts-small"
+                  style:font-family={ap.subFont || null}
+                  style:color={lineColor("sub")}
+                  style:font-size="{ap.subSize * textBoost()}px"
+                  style:transform="translate({ap.subOffsetX ?? 0}px, {ap.subOffsetY ?? 0}px)"
+                >
+                  {[ap.showPomodoro && "24:18", ap.showSessions && "[2]"]
+                    .filter(Boolean)
+                    .join("  ")}
+                </div>
               </div>
             </div>
           </div>
@@ -1086,64 +1143,18 @@
                 </div>
               </div>
             {:else if apSub === "text"}
-              <div class="aprow">
-                <span class="aplabel">Font</span>
-                <div class="fontdd" class:open={fontOpen}>
+              <div class="apsubseg">
+                {#each [["label", "Top line"], ["sub", "Bottom line"]] as [id, name] (id)}
                   <button
-                    type="button"
-                    class="ctl fontdd-btn"
-                    style:font-family={ap.font}
+                    class:on={apLine === id}
                     onclick={() => {
-                      fontOpen = !fontOpen;
-                      fontSearch = "";
-                    }}
+                      apLine = id;
+                      fontOpen = false;
+                    }}>{name}</button
                   >
-                    <span class="fontdd-cur">{ap.font}</span>
-                    <span class="fontdd-caret">▾</span>
-                  </button>
-                  {#if fontOpen}
-                    <div
-                      class="fontdd-backdrop"
-                      role="presentation"
-                      onclick={() => (fontOpen = false)}
-                    ></div>
-                    <div class="fontdd-panel">
-                      <!-- svelte-ignore a11y_autofocus -->
-                      <input
-                        class="fontdd-search"
-                        placeholder="Search fonts…"
-                        bind:value={fontSearch}
-                        autofocus
-                      />
-                      <div class="fontdd-list">
-                        {#each fontMatches as f}
-                          <div
-                            class="fontdd-opt"
-                            class:sel={ap.font === f}
-                            style:font-family={f}
-                            role="button"
-                            tabindex="0"
-                            onclick={() => {
-                              ap.font = f;
-                              fontOpen = false;
-                            }}
-                            onkeydown={(e) =>
-                              e.key === "Enter" &&
-                              ((ap.font = f), (fontOpen = false))}
-                          >
-                            {f}
-                          </div>
-                        {/each}
-                        {#if fontMatches.length === 0}<div class="fontdd-empty">
-                            No matches
-                          </div>{/if}
-                      </div>
-                    </div>
-                  {/if}
-                </div>
+                {/each}
               </div>
-              {@render lineControls("label", "Top line")}
-              {@render lineControls("sub", "Bottom line")}
+              {@render lineControls(apLine, apLine === "label" ? "Top line" : "Bottom line")}
             {:else}
               <div class="timers">
                 {#if mode === "work"}
@@ -1666,19 +1677,6 @@
     white-space: nowrap;
   }
 
-  .chk {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    margin: 9px 0;
-    color: var(--fore);
-    cursor: pointer;
-  }
-  .chk input {
-    accent-color: var(--accent);
-    width: 16px;
-    height: 16px;
-  }
   .hk {
     display: flex;
     align-items: center;
@@ -1807,28 +1805,32 @@
     /* stands in for a desktop wallpaper, so the (usually white) bubble text reads in both themes */
     background: linear-gradient(135deg, #27405f, #5b3f6e 60%, #a8576a);
   }
-  .text-stage .orb {
+  /* the bubble at real size, scaled down from the top centre of its skin */
+  .mini {
     position: absolute;
     left: 50%;
-    top: 50%; /* skin centered; the text is measured from its bottom edge */
-    transform: translate(-50%, -50%);
-  }
-  .text-sample {
-    position: absolute;
-    left: 50%;
-    /* top is set inline: skin-bottom + offsetY (scaled) — tracks the skin's bottom */
+    transform-origin: top center;
     display: flex;
     flex-direction: column;
     align-items: center;
-    text-align: center;
-    gap: 1px;
+    line-height: normal;
+    font-weight: 400;
+  }
+  .mini-text {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .ts-big {
-    font-weight: 600;
+    margin-top: 2px;
+    letter-spacing: 3px;
+    opacity: 0.9;
+    min-height: 24px;
   }
   .ts-small {
-    font-size: 12px;
-    color: var(--muted);
+    letter-spacing: 2px;
+    opacity: 0.65;
+    min-height: 18px;
   }
   .text-controls .sliderwrap {
     flex: none;
@@ -2258,26 +2260,6 @@
     background: var(--brk);
     color: var(--brkFg);
   }
-  .skin-tags {
-    position: absolute;
-    top: 42px;
-    left: 8px;
-    z-index: 2;
-    display: flex;
-    gap: 4px;
-  }
-  .mtag {
-    font-size: 10.5px;
-    font-weight: 600;
-    padding: 1px 7px;
-    border-radius: 9px;
-    background: var(--accent);
-    color: var(--accentFg);
-  }
-  .mtag.brk {
-    background: var(--brk);
-    color: var(--brkFg);
-  }
 
   /* timers */
   .desc {
@@ -2412,19 +2394,6 @@
   }
   .aprow .sliderwrap {
     max-width: none;
-  }
-  .ap-line {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    margin-top: 10px;
-  }
-  .ap-line .ch {
-    flex: 1;
-    margin: 0;
-  }
-  .ap-line .chk {
-    margin: 0;
   }
   .skin-gitem .skin-btn {
     padding: 4px 9px;

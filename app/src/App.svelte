@@ -120,7 +120,14 @@
 
   // Work: small click-through bubble parked in a corner.
   // Break: fullscreen, fully interactive frosted overlay (sized/centered via CSS).
+  // ownMove > 0 while (and shortly after) the window is laid out from code, so those moves are
+  // not taken for the user dragging the bubble.
+  let ownMove = 0;
   async function applyWindowForMode(mode) {
+    ownMove++;
+    try { await layoutWindow(mode); } finally { setTimeout(() => ownMove--, 250); }
+  }
+  async function layoutWindow(mode) {
     if (!('__TAURI_INTERNALS__' in window)) return;
     const { getCurrentWindow, currentMonitor, LogicalSize, LogicalPosition, PhysicalSize, PhysicalPosition } =
       await import('@tauri-apps/api/window');
@@ -184,6 +191,7 @@
     if (mode !== 'break') confirmLeave = false;
     ap = settings.appearance[modeKey(mode)];
     const skin = await skinFor(mode);
+    if (destroyed) return;                 // torn down (hot reload) while the skin loaded
     currentSkin = skin;
     textColor = ap.textColor || skin.manifest.text?.color || '#eef6ff';
     mounted = mountSkin(stage, skin, { fill: settings.skinColors?.[ap.skin] });
@@ -529,7 +537,9 @@
     if ('__TAURI_INTERNALS__' in window) {
       document.body.classList.add('tauri');
       setupHoverDrag();
-      const { listen, emit } = await import('@tauri-apps/api/event');
+      const { listen: rawListen, emit } = await import('@tauri-apps/api/event');
+      // A torn-down copy (hot reload) stays registered; it must not keep reacting to events.
+      const listen = (name, fn) => rawListen(name, (e) => { if (!destroyed) return fn(e); });
       function setPaused(p) {
         paused = p;
         pomo = paused ? Pomodoro.pause(pomo) : Pomodoro.resume(pomo);
@@ -628,10 +638,13 @@
         await syncAutostart();
       });
 
-      // Settings > Appearance "Live update": the settings window saved appearance, skin colors
-      // and skins; show them without the full settings-changed pass (timers, hotkeys, autostart).
+      // Settings "Live update": the settings window saved appearance, skin colors, skins and
+      // music; show them without the full settings-changed pass (timers, hotkeys, autostart).
       listen('appearance-live', async () => {
         const saved = loadSettings();
+        settings.music = saved.music;
+        syncMusic();
+        emitMusicState();
         if (editing) {
           // Edit mode is open: take the values in place (ap keeps pointing at them) and leave
           // the widened window alone.
@@ -653,18 +666,34 @@
 
       // Persist manual drags (work only): keep the saved corner offset in sync with reality.
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      let moveTimer;
+      let moveTimer, liveSentAt = 0;
       getCurrentWindow().onMoved(({ payload: { x, y } }) => {
         if (currentMode !== 'work') return;   // break is fullscreen — nothing to persist
+        const where = () => {
+          const dpr = window.devicePixelRatio || 1;
+          const screenW = window.screen.availWidth / dpr;
+          return {
+            posRight: Math.max(0, Math.round(screenW - settings.appearance.work.sizePx - x / dpr)),
+            posTop: Math.max(0, Math.round(y / dpr)),
+          };
+        };
+        // While the user drags: a live settings window shows the position as it changes.
+        // Nothing is stored here until the drag has settled (below).
+        if (!ownMove && !editing && !destroyed && Date.now() - liveSentAt > 50) {
+          liveSentAt = Date.now();
+          emitEvent('bubble-edit-live', { work: where() });
+        }
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
-          if (editing) return;                // edit mode widened the window; not a real move
-          const dpr = window.devicePixelRatio || 1;
-          const winW = settings.appearance.work.sizePx;
-          const screenW = window.screen.availWidth / dpr;
-          settings.appearance.work.posRight = Math.max(0, Math.round(screenW - winW - x / dpr));
-          settings.appearance.work.posTop = Math.max(0, Math.round(y / dpr));
+          if (editing || destroyed) return;   // edit mode widened the window; not a real move
+          const work = settings.appearance.work, pos = where();
+          const sent = liveSentAt;
+          liveSentAt = 0;
+          // Unchanged (e.g. our own layout) and nothing shown on the way: nothing to do.
+          if (work.posRight === pos.posRight && work.posTop === pos.posTop && !sent) return;
+          Object.assign(work, pos);
           saveSettings($state.snapshot(settings));
+          emitEvent('bubble-edit-live', { work: pos });   // a live settings window follows
         }, 300);
       });
     }
@@ -749,10 +778,12 @@
     <!-- Empty lines get a placeholder in edit mode so they can still be grabbed. -->
     <div class="label tline" class:sel={selected === 'label'} role="presentation"
          style:color={ap.labelColor || textColor} style:font-size="{ap.labelSize}px"
+         style:font-family={ap.labelFont || null}
          style:transform="translate({ap.labelOffsetX ?? 0}px, {ap.labelOffsetY ?? 0}px)"
          onpointerdown={(e) => selectLine(e, 'label')}>{[label, phaseCountdown].filter(Boolean).join(' ') || (editing ? 'Text' : '')}</div>
     <div class="pomo tline" class:sel={selected === 'sub'} role="presentation"
          style:color={ap.subColor || textColor} style:font-size="{ap.subSize}px"
+         style:font-family={ap.subFont || null}
          style:transform="translate({ap.subOffsetX ?? 0}px, {ap.subOffsetY ?? 0}px)"
          onpointerdown={(e) => selectLine(e, 'sub')}>{[pomoText, sessionsText].filter(Boolean).join('  ') || (editing ? '00:00' : '')}</div>
   </div>

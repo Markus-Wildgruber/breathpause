@@ -102,11 +102,11 @@ test('Behavior: breathing music offers every sound and hold style, previews, and
   expect(errors).toEqual([]);
 });
 
-test('Appearance: Live update saves appearance changes at once and Cancel puts them back', async ({ page }) => {
+test('Appearance: Live update is on by default, saves appearance changes at once and Cancel puts them back', async ({ page }) => {
   await page.goto('/settings.html');
   const sizePx = () => page.evaluate(() =>
     JSON.parse(localStorage.getItem('breathpause.settings') || '{}').appearance?.work?.sizePx);
-  await page.getByRole('button', { name: 'Live update' }).click();
+  await expect(page.getByRole('button', { name: 'Live update' })).toHaveAttribute('aria-pressed', 'true');   // on by default
   await page.getByRole('slider', { name: 'Size', exact: true }).fill('300');
   await expect.poll(sizePx).toBe(300);               // written without pressing Save
   await page.getByRole('button', { name: 'Cancel' }).click();

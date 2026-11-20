@@ -29,6 +29,8 @@ function modeDefaults(overrides) {
     subOffsetY: 0,
     labelColor: '',             // '' = use textColor
     subColor: '',
+    labelFont: '',              // '' = use font
+    subFont: '',
     ...overrides,
   };
 }
