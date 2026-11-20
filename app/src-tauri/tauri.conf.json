@@ -38,8 +38,20 @@
     },
     "macOSPrivateApi": true
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM2MkFBNTVFMUMyNDBDNTUKUldSVkRDUWNYcVVxTnNCNWRHWUJ0c0MvTjE4L0Z3RHUwMkNsMXNGejVmVnRpUlhzWEVFdGdyaFMK",
+      "endpoints": [
+        "https://github.com/Markus-Wildgruber/breathpause/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "windows": {
       "nsis": {

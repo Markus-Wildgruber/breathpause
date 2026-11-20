@@ -23,20 +23,71 @@ struct MusicPayload {
   on: bool,
 }
 
+#[derive(serde::Deserialize)]
+struct UpdatePayload {
+  version: String,
+}
+
 // Live tray state + handles so the toggle/pause labels can flip with the app's state.
 struct TrayState {
   visible: bool,
   paused: bool,
   pause_label: String,
   resume_label: String,
+  update_shown: bool,
 }
 struct Tray {
+  menu: Menu<tauri::Wry>,
   toggle: MenuItem<tauri::Wry>,
   pause: MenuItem<tauri::Wry>,
   music: CheckMenuItem<tauri::Wry>,
+  update: MenuItem<tauri::Wry>, // in the menu only once an update is known
   settings: MenuItem<tauri::Wry>,
   exit: MenuItem<tauri::Wry>,
   state: Mutex<TrayState>,
+}
+
+// The tray icon with a pink dot in its top-right corner: "an update is available".
+// Drawn from the normal icon so there is no second image file to keep in sync.
+fn dotted_tray_icon() -> Option<tauri::image::Image<'static>> {
+  let base = tauri::image::Image::from_bytes(include_bytes!("../icons/favicon.ico")).ok()?;
+  let (w, h) = (base.width() as i32, base.height() as i32);
+  let mut px = base.rgba().to_vec();
+  let r = (w.min(h) as f32 * 0.24).max(2.0);
+  let (cx, cy) = (w as f32 - r - 0.5, r + 0.5);
+  for y in 0..h {
+    for x in 0..w {
+      let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+      if d <= r {
+        let i = ((y * w + x) * 4) as usize;
+        px[i..i + 4].copy_from_slice(&[0xd4, 0x57, 0x7f, 0xff]); // pink #d4577f
+      }
+    }
+  }
+  Some(tauri::image::Image::new_owned(px, w as u32, h as u32))
+}
+
+// Installed (NSIS installer, winget, macOS .app) or the standalone exe. Only installed copies
+// may run the updater: on a standalone exe it would install a second copy beside it.
+#[tauri::command]
+fn install_kind() -> &'static str {
+  #[cfg(windows)]
+  {
+    // The NSIS installer puts its uninstaller next to the app's exe; the standalone has none.
+    let installed = std::env::current_exe()
+      .ok()
+      .and_then(|exe| exe.parent().map(|dir| dir.join("uninstall.exe").exists()))
+      .unwrap_or(false);
+    if installed { "installed" } else { "standalone" }
+  }
+  #[cfg(target_os = "macos")]
+  {
+    "installed"
+  }
+  #[cfg(not(any(windows, target_os = "macos")))]
+  {
+    "standalone"
+  }
 }
 
 fn refresh_toggle(app: &AppHandle) {
@@ -78,22 +129,31 @@ const BROWSER_ARGS: &str =
   "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
 
 fn open_settings(app: &AppHandle) {
+  open_settings_on(app, None);
+}
+
+// Opens settings on a given pane (the tray's "Update to …" item opens About).
+fn open_settings_on(app: &AppHandle, pane: Option<&str>) {
   if let Some(win) = app.get_webview_window("settings") {
+    if let Some(p) = pane {
+      let _ = app.emit_to("settings", "show-pane", p);
+    }
     let _ = win.show();
     let _ = win.set_focus();
     return;
   }
-  let _ = build_settings(app);
+  let _ = build_settings(app, pane);
 }
 
-fn build_settings(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+fn build_settings(app: &AppHandle, pane: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
   let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/favicon.ico"))?;
   // `--pane <id>` (CI smoke tests / deep links) opens settings on a specific pane.
   // Validate against the known panes so an arbitrary value can't be spliced into the URL.
   const PANES: [&str; 6] = ["appearance", "patterns", "timers", "skins", "behavior", "about"];
   let args: Vec<String> = std::env::args().collect();
-  let url = match args.iter().position(|a| a == "--pane").and_then(|i| args.get(i + 1)) {
-    Some(p) if PANES.contains(&p.as_str()) => format!("settings.html?pane={p}"),
+  let from_args = args.iter().position(|a| a == "--pane").and_then(|i| args.get(i + 1)).map(|s| s.as_str());
+  let url = match pane.or(from_args) {
+    Some(p) if PANES.contains(&p) => format!("settings.html?pane={p}"),
     _ => "settings.html".into(),
   };
   WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(url.into()))
@@ -215,7 +275,9 @@ fn open_pattern_editor(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![capture_monitor, launch_options])
+    .invoke_handler(tauri::generate_handler![capture_monitor, launch_options, install_kind])
+    .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_process::init()) // relaunch after an update
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_autostart::init(
@@ -251,11 +313,15 @@ pub fn run() {
       let sep = PredefinedMenuItem::separator(app)?;
       let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
       let menu = Menu::with_items(app, &[&toggle, &pause, &music, &settings, &sep, &quit])?;
+      // Inserted above "Settings…" when the bubble finds an update (update-available).
+      let update = MenuItem::with_id(app, "update", "Update…", true, None::<&str>)?;
 
       app.manage(Tray {
+        menu: menu.clone(),
         toggle: toggle.clone(),
         pause: pause.clone(),
         music: music.clone(),
+        update,
         settings: settings.clone(),
         exit: quit.clone(),
         state: Mutex::new(TrayState {
@@ -263,6 +329,7 @@ pub fn run() {
           paused: false,
           pause_label: "Pause".into(),
           resume_label: "Resume".into(),
+          update_shown: false,
         }),
       });
 
@@ -282,6 +349,7 @@ pub fn run() {
             let _ = app.emit_to("bubble", "toggle-music", ());
           }
           "settings" => open_settings(app),
+          "update" => open_settings_on(app, Some("about")),
           "quit" => app.exit(0),
           _ => {}
         })
@@ -350,6 +418,28 @@ pub fn run() {
         let _ = h_music.run_on_main_thread(move || {
           if let Some(tray) = h2.try_state::<Tray>() {
             let _ = tray.music.set_checked(payload.on);
+          }
+        });
+      });
+
+      // The bubble found an update: add "Update to x.y.z…" to the menu and dot the tray icon.
+      let h_upd = app.handle().clone();
+      app.listen_any("update-available", move |event| {
+        let Ok(payload) = serde_json::from_str::<UpdatePayload>(event.payload()) else {
+          return;
+        };
+        let h2 = h_upd.clone();
+        let _ = h_upd.run_on_main_thread(move || {
+          let Some(tray) = h2.try_state::<Tray>() else { return };
+          let _ = tray.update.set_text(format!("Update to {}…", payload.version));
+          let mut st = tray.state.lock().unwrap();
+          if st.update_shown {
+            return;
+          }
+          st.update_shown = true;
+          let _ = tray.menu.insert(&tray.update, 3); // above "Settings…"
+          if let (Some(icon), Some(t)) = (dotted_tray_icon(), h2.tray_by_id("main")) {
+            let _ = t.set_icon(Some(icon));
           }
         });
       });

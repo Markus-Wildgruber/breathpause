@@ -37,6 +37,7 @@
   let pomo = null;
   let paused = false;
   let breathT = 0;                   // seconds into the breathing pattern (the bubble's clock)
+  let updateVersion = $state('');    // a newer version found by the update check (dot on ⚙)
 
   // ===== breathing music =====
   const music = createMusic();
@@ -618,6 +619,24 @@
         }
       }
       await syncAutostart();
+
+      // Update check: shortly after start, then once a day, while the switch in Behavior is on.
+      // Found: the ⚙ button gets a dot and the tray its "Update to …" item (Rust).
+      async function checkForUpdate() {
+        if (destroyed || settings.behavior?.checkUpdates === false) return;
+        try {
+          const { findUpdate } = await import('./lib/updates.js');
+          const update = await findUpdate();
+          if (!update || destroyed) return;
+          updateVersion = update.version;
+          emit('update-available', { version: update.version });
+        } catch (e) {
+          console.warn('update check failed:', e);   // offline, or no release yet: try tomorrow
+        }
+      }
+      setTimeout(checkForUpdate, 15000);             // out of the way of the start-up work
+      setInterval(checkForUpdate, 24 * 60 * 60 * 1000);
+
       listen('settings-changed', async () => {
         // A save from the settings window wins over unsaved bubble edits.
         await finishEdit(false);
@@ -800,7 +819,9 @@
           <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
         </button>
       {:else}
-        <button class="bb" onclick={() => emitEvent('open-settings')} title="Settings" aria-label="Settings">
+        <button class="bb" onclick={() => emitEvent('open-settings')} aria-label="Settings"
+                title={updateVersion ? `Settings · version ${updateVersion} is available` : 'Settings'}>
+          {#if updateVersion}<i class="upd-dot"></i>{/if}
           <svg viewBox="0 0 16 16"><path d="M12.8 6.01L14.84 6.5V9.5L12.8 9.99L13.9 11.77L11.77 13.9L9.99 12.8L9.5 14.84H6.5L6.01 12.8L4.23 13.9L2.1 11.77L3.2 9.99L1.16 9.5V6.5L3.2 6.01L2.1 4.23L4.23 2.1L6.01 3.2L6.5 1.16H9.5L9.99 3.2L11.77 2.1L13.9 4.23Z" /><circle cx="8" cy="8" r="2.2" /></svg>
         </button>
         <button class="bb" onclick={hideBubble} title="Hide" aria-label="Hide">
@@ -1089,6 +1110,17 @@
     cursor: pointer;
   }
   .bb:hover { background: var(--ui-bg-hover); }
+  .bubble-btns .bb { position: relative; }   /* not the music button: that one is absolute */
+  .upd-dot {                 /* "update available"; the pink of the app's second color */
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #d4577f;
+    box-shadow: 0 0 0 2px var(--ui-bg);
+  }
   .music-btn { position: absolute; right: 4px; display: none; z-index: 5; }
   :global(body.hot) .music-btn, .music-btn.show { display: grid; }
   .music-btn[aria-pressed="true"] { color: var(--ui-accent); }

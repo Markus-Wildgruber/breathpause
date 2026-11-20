@@ -28,6 +28,7 @@
     baseTextColor,
   } from "./lib/appearance-edit.js";
   import Pattern from "./core/pattern.js";
+  import { releaseUrl } from "./lib/updates.js";
   import { SOUNDS, HOLDS, createMusic } from "./lib/music.js";
 
   const inTauri =
@@ -115,6 +116,39 @@
     { id: "position", label: "Position" },
   ];
   let showCredits = $state(false);
+
+  // About > update card. state: idle | checking | none | available | downloading | failed | error
+  let upd = $state({ state: "idle" });
+  let updKind = $state("installed"); // 'standalone' gets a Download link instead of installing
+  let updObj = null;
+  async function checkUpdates() {
+    upd = { state: "checking" };
+    try {
+      const { findUpdate, installKind } = await import("./lib/updates.js");
+      const [u, kind] = await Promise.all([findUpdate(), installKind()]);
+      updObj = u;
+      updKind = kind;
+      upd = u ? { state: "available", version: u.version } : { state: "none" };
+    } catch (e) {
+      console.warn("update check failed:", e);
+      upd = { state: "error" };
+    }
+  }
+  async function startInstall() {
+    const version = upd.version;
+    upd = { state: "downloading", version, pct: null };
+    try {
+      const { installUpdate } = await import("./lib/updates.js");
+      await installUpdate(updObj, (pct) => (upd.pct = pct));
+    } catch (e) {
+      console.warn("update install failed:", e);
+      upd = { state: "failed", version };
+    }
+  }
+  // Opening About checks once per window (the bubble does the daily check).
+  $effect(() => {
+    if (inTauri && pane === "about" && upd.state === "idle") checkUpdates();
+  });
 
   const BH_TABS = [
     { id: "general", label: "General" },
@@ -543,6 +577,7 @@
     let unlistenEdit = null;
     let unlistenMove = null;
     let unlistenClose = null;
+    let unlistenPane = null;
     if (inTauri) {
       (async () => {
         const { restoreWindowPosition, trackWindowPosition } = await import(
@@ -558,6 +593,10 @@
 
         const { listen } = await import("@tauri-apps/api/event");
         unlisten = await listen("pattern-editor-saved", refreshPatterns);
+        // The tray's "Update to …" item, while this window is already open.
+        unlistenPane = await listen("show-pane", ({ payload }) => {
+          if (NAV.some((n) => n.id === payload)) pane = payload;
+        });
         unlistenBubble = await listen("bubble-settings-saved", refreshBubbleEdits);
         unlistenEdit = await listen("bubble-edit-live", liveFromBubble);
       })();
@@ -574,6 +613,7 @@
       unlistenEdit?.();
       unlistenMove?.();
       unlistenClose?.();
+      unlistenPane?.();
       window.removeEventListener("focus", refreshPatterns);
       preview.dispose();           // a running "Listen" must not outlive this view
     };
@@ -1255,6 +1295,13 @@
                 bind:checked={s.behavior.chimeOnTransitions}
               /></label
             >
+            <label class="swrow"
+              >Check for updates at start and once a day<input
+                type="checkbox"
+                class="sw"
+                bind:checked={s.behavior.checkUpdates}
+              /></label
+            >
           </div>
           <!-- The two choices the bubble's dialogs offer ("Don't show again", "Always save"),
                so they can be changed back. -->
@@ -1377,6 +1424,44 @@
           />
           <div class="about-name">BreathPause</div>
           <div class="about-ver"><span class="verpill">Version {version}</span></div>
+          {#if inTauri && upd.state !== "idle"}
+            <div class="upcard" class:new={["available", "downloading", "failed"].includes(upd.state)}>
+              {#if upd.state === "checking"}
+                <span class="gsummary">Checking for updates…</span>
+              {:else if upd.state === "available"}
+                <div class="uprow">
+                  <b>Version {upd.version} is available</b>
+                  <button class="linklike" onclick={() => openExternal(releaseUrl(upd.version))}>What's new</button>
+                </div>
+                <div class="uprow">
+                  {#if updKind === "standalone"}
+                    <span class="gsummary">Download the new exe and replace this one.</span>
+                    <button class="btn primary" onclick={() => openExternal(releaseUrl(upd.version))}>Download</button>
+                  {:else}
+                    <span class="gsummary">BreathPause restarts when it's done.</span>
+                    <button class="btn primary" onclick={startInstall}>Install &amp; restart</button>
+                  {/if}
+                </div>
+              {:else if upd.state === "downloading"}
+                <div class="uprow">
+                  <b>Downloading {upd.version}…</b>
+                  <span class="gsummary">{upd.pct == null ? "" : upd.pct + "%"}</span>
+                </div>
+                <div class="upbar"><i style:width="{upd.pct ?? 0}%"></i></div>
+              {:else if upd.state === "failed"}
+                <div class="uprow">
+                  <b>The update couldn't be installed</b>
+                  <button class="btn" onclick={startInstall}>Try again</button>
+                </div>
+                <span class="gsummary">Check your connection, or download it from the release page.</span>
+              {:else}
+                <div class="uprow">
+                  <b>{upd.state === "none" ? "BreathPause is up to date" : "Couldn't check for updates"}</b>
+                  <button class="btn" onclick={checkUpdates}>Check now</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
           <div class="about-tag">
             An always-on-top breathing bubble. Sits in the corner and
             breathes quietly while you work, then guides you through a
@@ -2216,6 +2301,41 @@
     max-width: 360px;
     margin: 0 auto 6px;
     line-height: 1.5;
+  }
+  /* About › update card */
+  .upcard {
+    max-width: 420px;
+    margin: 4px auto 12px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: left;
+    background: var(--cardbg);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+  }
+  .upcard.new {
+    border-left-color: var(--brk); /* pink: something new */
+  }
+  .uprow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .upbar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--field);
+    overflow: hidden;
+  }
+  .upbar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.2s;
   }
   .import-error {
     color: #e05252;

@@ -22,9 +22,10 @@ const jsSources = readdirSync(new URL('src/', root), { recursive: true })
   .join('\n');
 
 // Events the JS side emits for the Rust side to handle.
-const JS_TO_RUST = ['app-quit', 'apply-tray-text', 'open-settings', 'open-pattern-editor', 'music-changed'];
+const JS_TO_RUST = ['app-quit', 'apply-tray-text', 'open-settings', 'open-pattern-editor', 'music-changed',
+  'update-available'];
 // Events the Rust side emits for the JS side to handle.
-const RUST_TO_JS = ['toggle-pause', 'toggle-music'];
+const RUST_TO_JS = ['toggle-pause', 'toggle-music', 'show-pane'];
 
 // Match emit('ev') / emit("ev") regardless of quote style (prettier may flip them).
 const jsCalls = (fn, ev) => jsSources.includes(`${fn}('${ev}'`) || jsSources.includes(`${fn}("${ev}"`);
@@ -72,6 +73,23 @@ test('music-changed payload: the bubble sends the one field Rust reads', () => {
   assert.ok(block, 'MusicPayload struct not found in lib.rs');
   assert.match(block[1], /\bon\s*:\s*bool/);
   assert.ok(jsSources.includes("emit('music-changed', { on:"), 'bubble emits { on }');
+});
+
+test('update-available payload: the bubble sends the one field Rust reads', () => {
+  const block = libRs.match(/struct\s+UpdatePayload\s*\{([^}]*)\}/);
+  assert.ok(block, 'UpdatePayload struct not found in lib.rs');
+  assert.match(block[1], /\bversion\s*:\s*String/);
+  assert.ok(jsSources.includes("emit('update-available', { version:"), 'bubble emits { version }');
+});
+
+test('updater: install_kind is registered, and update/restart are allowed', () => {
+  assert.match(libRs, /generate_handler!\[[^\]]*\binstall_kind\b/);
+  const perms = capability.permissions.filter((p) => typeof p === 'string');
+  assert.ok(perms.includes('updater:default'));
+  assert.ok(perms.includes('process:allow-restart'));
+  const conf = JSON.parse(read('src-tauri/tauri.conf.json'));
+  assert.ok(conf.bundle.createUpdaterArtifacts, 'release builds must produce signed update files');
+  assert.match(conf.plugins.updater.pubkey, /^[A-Za-z0-9+/=]{40,}$/, 'pubkey is the key text, not a path');
 });
 
 test('browser args: every window uses the same WebView2 flags (mixed flags fail to open)', () => {

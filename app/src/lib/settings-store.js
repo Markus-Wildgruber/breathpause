@@ -83,6 +83,7 @@ export const DEFAULT_SETTINGS = {
     chimeOnTransitions: false,
     hideNoticeOff: false,       // "keeps running in the tray" notice dismissed for good
     editAutoSave: false,        // Esc in bubble edit mode saves without asking
+    checkUpdates: true,         // look for a new version at start and once a day
   },
   // Global (OS-registered) hotkeys. Ctrl+Alt+Shift+<key>: practically never taken by
   // other apps, and unlike plain Ctrl+Alt it can't collide with AltGr characters on

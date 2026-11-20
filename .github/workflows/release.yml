@@ -63,6 +63,11 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (minisign): signs the update bundles and lets tauri-action write
+          # latest.json, which installed copies check. Separate from code signing below.
+          # LOSING THIS KEY strands every installed copy: they only accept updates signed with it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # --- Signing (unset for now → unsigned builds) ---
           # Windows (Azure Trusted Signing or a .pfx) and macOS (Developer ID +
           # notarization) secrets get added here later. Until then, installers
