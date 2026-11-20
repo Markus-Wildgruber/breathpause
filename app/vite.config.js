@@ -5,6 +5,8 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [svelte()],
+  // Fixed port: tauri.conf.json devUrl and playwright.config.js point at it; fail instead of drifting.
+  server: { port: 5175, strictPort: true },
   build: {
     rollupOptions: {
       input: {

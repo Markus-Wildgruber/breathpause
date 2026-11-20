@@ -375,7 +375,7 @@ export function createMusic() {
   let opts = { sound: 'handpan', hold: 'ring', volume: 0.55, room: 0.5 };
   let voice = null, bus = null, timer = 0;
   let timeline = [], nextIdx = 0, scheduledUntil = 0;
-  let base = 0, ctx0 = 0, paused = false, pauseTimer = 0;
+  let base = 0, ctx0 = 0, paused = false, pauseTimer = 0, disposed = false;
 
   function ensure() {
     if (ctx) return;
@@ -430,6 +430,7 @@ export function createMusic() {
 
     // Start (or restart) with these engine phases, joining at breathT seconds into the pattern.
     start(phases, breathT) {
+      if (disposed) return;            // a late handler of a torn-down owner must not revive it
       ensure();
       teardown(0.25);
       timeline = toTimeline(phases);
@@ -468,6 +469,17 @@ export function createMusic() {
       paused = true;
       master.gain.setTargetAtTime(0, ctx.currentTime, 0.1);
       pauseTimer = setTimeout(() => ctx.suspend(), 450);
+    },
+
+    // Silence for good and release the audio device: for when the window or component that
+    // owns this player goes away (also a hot-reloaded component, whose replacement would
+    // otherwise have no way to stop it). Later calls are harmless no-ops.
+    dispose() {
+      disposed = true;
+      clearInterval(timer);
+      clearTimeout(pauseTimer);
+      voice = null; bus = null; paused = false;
+      ctx?.close();
     },
 
     // Seconds into the pattern on the audio clock (frozen while paused/suspended).

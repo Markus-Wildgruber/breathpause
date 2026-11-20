@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import Breathing from './core/breathing.js';
   import Pomodoro from './core/pomodoro.js';
   import Timefmt from './core/timefmt.js';
@@ -8,7 +8,9 @@
   import { setupHoverDrag, setHoverDragActive, setPinned } from './lib/interactivity.js';
   import { loadSettings, saveSettings, mergePatch, modeKey, bubbleChanges } from './lib/settings-store.js';
   import { editLayout, editMargin } from './lib/edit-layout.js';
+  import { BUBBLE_RANGE, SIZE_RANGE, LINE_PARTS, lineOffsetRange, setSkinColor, setLineColor } from './lib/appearance-edit.js';
   import { createMusic, musicStep } from './lib/music.js';
+  import { createPauseReasons } from './lib/pause-reasons.js';
 
   let settings = $state(loadSettings());
 
@@ -39,6 +41,21 @@
   // ===== breathing music =====
   const music = createMusic();
   let musicKey = '';
+
+  // Torn down (a hot reload in dev replaces this component): silence this copy's music and
+  // stop its frame loop, or it keeps playing with no button left that can reach it.
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+    music.dispose();
+    window.removeEventListener('pointerdown', unlockMusic, true);
+  });
+
+  // Autoplay rules can keep remembered music silent until the first click: on any click,
+  // restart it at the bubble's current position (inside the click, so it is allowed to play).
+  function unlockMusic() {
+    if (settings.music.on && music.playing && !music.running && !paused) { musicKey = ''; syncMusic(); }
+  }
 
   // Bring the music in line with the settings and the timer (decision: musicStep): the current
   // mode's pattern while on, faded out while the timer is paused, silent when off. Every start
@@ -184,14 +201,7 @@
   function cancelLeave() { confirmLeave = false; }
 
   // ===== bubble edit mode: drag/size/color each text line =====
-  // 'label' = phase line, 'sub' = pomodoro line; keys match labelSize/subSize etc.
-  const SIZE_RANGE = { label: [10, 32], sub: [6, 24] };
-  // The two parts of each line that can be shown/hidden.
-  const LINE_PARTS = {
-    label: [['showPhaseLabel', 'Phase'], ['showPhaseCountdown', 'Count']],
-    sub: [['showPomodoro', 'Timer'], ['showSessions', 'Sessions']],
-  };
-  const BUBBLE_RANGE = [60, 480];    // same as the settings window's size slider
+  // Ranges, line parts and color setters are shared with the settings window (appearance-edit.js).
   const PRESETS = ['#FFFFFF', '#EEF6FF', '#FFD166', '#F4A261', '#E76F51', '#EF476F',
                    '#06D6A0', '#2EC4B6', '#118AB2', '#8E7DFF', '#9AA0A6'];
   // Room (CSS px) the window grows by on each side: side rail (76) + color panel (190) + gaps.
@@ -325,11 +335,24 @@
     return { destroy() { alive = false; } };
   }
 
+  // While editing, each change is passed on to the settings window (it takes them only with its
+  // "Live update" on), so both show the same values. editSent = the state the other side has.
+  const editState = () => ({
+    work: $state.snapshot(settings.appearance.work),
+    skinColors: $state.snapshot(settings.skinColors),
+  });
+  let editSent = '';
+  $effect(() => {
+    if (!editing) return;
+    const state = editState(), json = JSON.stringify(state);
+    if (json === editSent) return;
+    const timer = setTimeout(() => { editSent = json; emitEvent('bubble-edit-live', state); }, 80);
+    return () => clearTimeout(timer);
+  });
+
   async function startEdit() {
-    editSnapshot = {
-      work: $state.snapshot(settings.appearance.work),
-      skinColors: $state.snapshot(settings.skinColors),
-    };
+    editSnapshot = editState();
+    editSent = JSON.stringify(editSnapshot);
     editing = true;
     selected = null;
     setPinned(true);
@@ -348,6 +371,7 @@
     } else {
       Object.assign(settings.appearance.work, editSnapshot.work);
       settings.skinColors = editSnapshot.skinColors;
+      emitEvent('bubble-edit-live', editSnapshot);   // a live settings window goes back too
       if (relayout) await refreshSkin();
     }
     editSnapshot = null;
@@ -415,12 +439,12 @@
     const snapX = sr.left + sr.width / 2 - baseX, snapY = sr.top + sr.height / 2 - baseY;
     const dock = (v, target) => (Math.abs(v - target) <= SNAP ? target : v);
     // Keep the line inside the normal (non-edit) bubble window so it can't get lost.
-    const half = ap.sizePx / 2;
-    const clamp = (v, lo, hi) => Math.round(Math.min(hi, Math.max(lo, v)));
+    const lim = lineOffsetRange(ap);
+    const clamp = (v, [lo, hi]) => Math.round(Math.min(hi, Math.max(lo, v)));
     el.setPointerCapture(e.pointerId);
     const move = (ev) => {
-      ap[kx] = clamp(dock(ev.clientX - startX, snapX), -half, half);
-      ap[ky] = clamp(dock(ev.clientY - startY, snapY), -ap.sizePx, 48);
+      ap[kx] = clamp(dock(ev.clientX - startX, snapX), lim.x);
+      ap[ky] = clamp(dock(ev.clientY - startY, snapY), lim.y);
     };
     const up = () => {
       el.removeEventListener('pointermove', move);
@@ -458,11 +482,10 @@
 
   function setColor(c) {
     if (selected === 'bubble') {
-      if (c) settings.skinColors[ap.skin] = c;
-      else delete settings.skinColors[ap.skin];
+      setSkinColor(settings, ap.skin, c);
       remountSkin();
     } else {
-      ap[selected + 'Color'] = c;
+      setLineColor(ap, selected, c);
     }
     hexDraft = shownColor();
   }
@@ -514,34 +537,24 @@
         syncMusic();                          // music fades with every kind of pause (manual, hide, lock)
       }
       listen('toggle-music', () => toggleMusic());
-      // Pauses the app made on its own (bubble hidden, screen locked) that it may undo later.
-      // Any pause/resume by the user takes over, so both are cleared then.
-      let pausedByHide = false, pausedByLock = false;
-      const clearAutoPause = () => { pausedByHide = false; pausedByLock = false; };
-      listen('toggle-pause', () => {
-        clearAutoPause();
-        setPaused(!paused);
-      });
-      // Hiding the bubble puts the pomodoro on hold (no surprise break overlay while
-      // hidden). Showing it again resumes only a hide-pause, never a manual one.
+      // Why the timer is on hold (lib/pause-reasons.js); it runs only when no reason is left.
+      // Hiding the bubble (no surprise break overlay while hidden) and a locked screen each
+      // add their reason even if already paused, so a hidden bubble stays paused through
+      // lock/unlock. A pause/resume by the user takes over: resuming clears every reason.
+      const holds = createPauseReasons();
+      const applyHolds = () => { if (holds.paused !== paused) setPaused(holds.paused); };
+      function userTogglePause() {
+        if (paused) holds.clear(); else holds.add('manual');
+        applyHolds();
+      }
+      listen('toggle-pause', userTogglePause);
       listen('visibility-changed', ({ payload: visible }) => {
-        if (!visible && !paused) {
-          pausedByHide = true;
-          setPaused(true);
-        } else if (visible && pausedByHide) {
-          pausedByHide = false;
-          setPaused(false);
-        }
+        if (visible) holds.remove('hidden'); else holds.add('hidden');
+        applyHolds();
       });
-      // Same for a locked screen: hold while locked, resume only a lock-pause on unlock.
       listen('screen-locked', ({ payload: locked }) => {
-        if (locked && !paused) {
-          pausedByLock = true;
-          setPaused(true);
-        } else if (!locked && pausedByLock) {
-          pausedByLock = false;
-          setPaused(false);
-        }
+        if (locked) holds.add('locked'); else holds.remove('locked');
+        applyHolds();
       });
 
       // OS-global hotkeys: the OS registers each combo and notifies us regardless of
@@ -551,15 +564,10 @@
       const hotkeyActions = {
         // stop = back to a fresh work session, on hold; start = run again
         startStop: () => {
-          clearAutoPause();
-          if (paused) {
-            setPaused(false);
-          } else {
-            pomo = newPomo();
-            setPaused(true);
-          }
+          if (!paused) pomo = newPomo();
+          userTogglePause();
         },
-        pauseResume: () => { clearAutoPause(); setPaused(!paused); },
+        pauseResume: userTogglePause,
         skip: () => { pomo = Pomodoro.skip(pomo).state; },
         settings: () => emit('open-settings'),
         hide: () => emit('toggle-bubble'),
@@ -620,6 +628,29 @@
         await syncAutostart();
       });
 
+      // Settings > Appearance "Live update": the settings window saved appearance, skin colors
+      // and skins; show them without the full settings-changed pass (timers, hotkeys, autostart).
+      listen('appearance-live', async () => {
+        const saved = loadSettings();
+        if (editing) {
+          // Edit mode is open: take the values in place (ap keeps pointing at them) and leave
+          // the widened window alone.
+          Object.assign(settings.appearance.work, saved.appearance.work);
+          Object.assign(settings.appearance.break, saved.appearance.break);
+          settings.skinColors = saved.skinColors;
+          settings.customSkins = saved.customSkins;
+          editSent = JSON.stringify(editState());   // came from settings: don't send it back
+          for (const k of Object.keys(skins)) delete skins[k];
+          await refreshSkin();
+          return;
+        }
+        settings.appearance = saved.appearance;
+        settings.skinColors = saved.skinColors;
+        settings.customSkins = saved.customSkins;
+        for (const k of Object.keys(skins)) delete skins[k];
+        await showMode(pomo.mode);
+      });
+
       // Persist manual drags (work only): keep the saved corner offset in sync with reality.
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       let moveTimer;
@@ -641,16 +672,13 @@
 
     syncMusic();
     emitMusicState();
-    // Autoplay rules can keep remembered music silent until the first click: on any click,
-    // restart it at the bubble's current position (inside the click, so it is allowed to play).
-    window.addEventListener('pointerdown', () => {
-      if (settings.music.on && music.playing && !music.running && !paused) { musicKey = ''; syncMusic(); }
-    }, true);
+    window.addEventListener('pointerdown', unlockMusic, true);
 
     const start = performance.now();
     let last = start;
 
     function frame(now) {
+      if (destroyed) return;
       // Cap the per-frame delta at 1s so waking from sleep doesn't fast-forward
       // through many work/break boundaries at once (effectively pauses during sleep).
       const dt = Pomodoro.limitFrameDt ? Pomodoro.limitFrameDt((now - last) / 1000, 1) : (now - last) / 1000;

@@ -112,7 +112,7 @@ radius binds `from: 52, to: 12` — it *grows* as breath falls.
    `document.getElementById('part').getBBox()` in any browser console.
 4. **Write `skin.json`** next to the SVG and iterate: a quick preview harness lives at
    `app/public/skins/cute-bear/breathing-demo.html` (run `npm run dev` inside `app/`,
-   open `http://localhost:5173/skins/cute-bear/breathing-demo.html`) — copy it into your
+   open `http://localhost:5175/skins/cute-bear/breathing-demo.html`) — copy it into your
    skin folder and it will drive *your* `skin.json`.
 5. **Zip the folder, import it** in Settings → Skins. Import validates the manifest and
    every binding target, and tells you what's wrong instead of failing silently.

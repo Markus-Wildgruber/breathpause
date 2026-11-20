@@ -17,6 +17,14 @@
     skinChoices,
   } from "./lib/skin.js";
   import Stepper from "./lib/Stepper.svelte";
+  import {
+    BUBBLE_RANGE,
+    SIZE_RANGE,
+    LINE_PARTS,
+    lineOffsetRange,
+    setSkinColor,
+    setLineColor,
+  } from "./lib/appearance-edit.js";
   import Pattern from "./core/pattern.js";
   import { SOUNDS, HOLDS, createMusic } from "./lib/music.js";
 
@@ -65,7 +73,7 @@
     if (previewing && `${m.sound}|${m.hold}` !== previewKey) startPreview();
   });
   $effect(() => {
-    if (pane !== "behavior" && previewing) { preview.stop(); previewing = false; }
+    if ((pane !== "behavior" || bhSub !== "sound") && previewing) { preview.stop(); previewing = false; }
   });
 
   const HOTKEY_ROWS = [
@@ -92,6 +100,45 @@
     s.hotkeys[id] = [...mods, key].join("+");
   }
   let apSub = $state("skin");
+  const AP_TABS = [
+    { id: "skin", label: "Bubble" },
+    { id: "text", label: "Text" },
+    { id: "position", label: "Position" },
+  ];
+  let showCredits = $state(false);
+
+  const BH_TABS = [
+    { id: "general", label: "General" },
+    { id: "sound", label: "Sound" },
+    { id: "hotkeys", label: "Hotkeys" },
+  ];
+  let bhSub = $state("general");
+
+  // Timers quick start: minutes in, seconds stored (what the steppers below edit).
+  const timerPreset = (name, work, brk, long, every) => ({
+    name,
+    t: { workSeconds: work * 60, breakSeconds: brk * 60, longBreakSeconds: long * 60, longBreakEvery: every },
+  });
+  const TIMER_PRESETS = [
+    timerPreset("Classic 25 / 5", 25, 5, 15, 4),
+    timerPreset("Deep focus 50 / 10", 50, 10, 30, 2),
+    timerPreset("Short 15 / 3", 15, 3, 10, 4),
+  ];
+  // "Custom" is on when picked, or as soon as the durations match none of the presets.
+  let customPicked = $state(false);
+  let timerPreset$ = $derived(
+    customPicked
+      ? null
+      : TIMER_PRESETS.find((p) => Object.keys(p.t).every((k) => s.timers[k] === p.t[k])),
+  );
+
+  // About > Artwork credits (short form of CREDITS.md).
+  const CREDITS = [
+    { id: "cute-bear", name: "Cute Bear", text: "Bear artwork from", source: "SVG Repo", url: "https://www.svgrepo.com", license: "SVG Repo License" },
+    { id: "sweet-jelly", name: "Sweet Jelly", text: "Jellyfish artwork from", source: "SVG Repo", url: "https://www.svgrepo.com", license: "SVG Repo License" },
+    { id: "sleepy-seal", name: "Sleepy Seal", text: "Derived from public-domain art on", source: "openclipart", url: "https://openclipart.org", license: "CC0 / Public Domain" },
+    { id: "orb", name: "Classic Orb", text: "Original work by Markus Wildgruber", license: "MIT" },
+  ];
 
   // Searchable font picker
   const FONTS = [
@@ -340,11 +387,8 @@
   let previewMounted = null;
   let apTheme = $state("#888888"); // current skin's authored anchor, for the swatch baseline
 
-  // Drop the per-skin color override -> back to the skin's authored look.
-  function resetColor() {
-    const { [ap.skin]: _drop, ...rest } = s.skinColors;
-    s.skinColors = rest;
-  }
+  // A text line's color as the bubble shows it: its own, else the shared default.
+  const lineColor = (line) => ap[line + "Color"] || ap.textColor || "#eef6ff";
 
   $effect(() => {
     const name = ap.skin || "orb";
@@ -368,6 +412,42 @@
     };
   });
 
+  // Live update: while on, appearance changes are saved and shown in the bubble right away.
+  // Only appearance, skin colors and skins are written; other unsaved changes wait for Save.
+  // Cancel puts back what was saved when it was first switched on.
+  let live = $state(false);
+  let liveBase = null,
+    livePushed = "";
+  const livePart = (x) =>
+    JSON.stringify({ appearance: x.appearance, skinColors: x.skinColors, customSkins: x.customSkins });
+  async function pushAppearance(json) {
+    saveSettings({ ...loadSettings(), ...JSON.parse(json) });
+    livePushed = json;
+    if (!inTauri) return;
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit("appearance-live");
+  }
+  // The other direction: a change made in the bubble's edit mode while Live update is on.
+  // Saved here, but not sent back — the bubble already shows it.
+  function liveFromBubble({ payload }) {
+    if (!live || !payload) return;
+    applyBubbleChanges(s, payload);
+    const json = livePart(s);
+    saveSettings({ ...loadSettings(), ...JSON.parse(json) });
+    livePushed = json;
+  }
+  function toggleLive() {
+    live = !live;
+    if (live) liveBase ??= livePart(loadSettings());
+  }
+  $effect(() => {
+    if (!live) return;
+    const json = livePart(s);
+    if (json === livePushed) return;
+    const timer = setTimeout(() => live && pushAppearance(json), 80); // one push per burst of slider ticks
+    return () => clearTimeout(timer);
+  });
+
   async function emitChanged() {
     if (!inTauri) return;
     const { emit } = await import("@tauri-apps/api/event");
@@ -375,6 +455,8 @@
   }
 
   async function close() {
+    live = false;
+    if (liveBase && liveBase !== livePushed) await pushAppearance(liveBase); // undo live changes
     if (!inTauri) return;
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     await getCurrentWindow().close();
@@ -383,6 +465,7 @@
   async function onSave() {
     const snap = $state.snapshot(s);
     saveSettings(snap);
+    liveBase = null; // saved: nothing for close() to undo
     await emitChanged();
     if (inTauri) {
       const { emit } = await import("@tauri-apps/api/event");
@@ -433,6 +516,7 @@
 
     let unlisten = null;
     let unlistenBubble = null;
+    let unlistenEdit = null;
     let unlistenMove = null;
     if (inTauri) {
       (async () => {
@@ -449,6 +533,7 @@
         const { listen } = await import("@tauri-apps/api/event");
         unlisten = await listen("pattern-editor-saved", refreshPatterns);
         unlistenBubble = await listen("bubble-settings-saved", refreshBubbleEdits);
+        unlistenEdit = await listen("bubble-edit-live", liveFromBubble);
       })();
     }
 
@@ -460,8 +545,10 @@
       cancelAnimationFrame(raf);
       unlisten?.();
       unlistenBubble?.();
+      unlistenEdit?.();
       unlistenMove?.();
       window.removeEventListener("focus", refreshPatterns);
+      preview.dispose();           // a running "Listen" must not outlive this view
     };
   });
 
@@ -510,6 +597,60 @@
   }
 </script>
 
+{#snippet lineControls(line, title)}
+  <div class="ap-line">
+    <span class="ch">{title}</span>
+    {#each LINE_PARTS[line] as [key, name] (key)}
+      <label class="chk"><input type="checkbox" bind:checked={ap[key]} />{name}</label>
+    {/each}
+  </div>
+  <div class="aprow">
+    <span class="aplabel">Size</span>
+    <div class="sliderwrap">
+      <input
+        type="range"
+        min={SIZE_RANGE[line][0]}
+        max={SIZE_RANGE[line][1]}
+        bind:value={ap[line + "Size"]}
+        aria-label={title + " size"}
+      />
+      <span class="sval">{ap[line + "Size"]}px</span>
+    </div>
+  </div>
+  <div class="aprow">
+    <span class="aplabel">Color</span>
+    <div class="colorrow">
+      <input
+        type="color"
+        class="swatch"
+        aria-label={title + " color"}
+        bind:value={() => lineColor(line), (v) => setLineColor(ap, line, v)}
+      />
+      <input
+        class="ctl small"
+        aria-label={title + " color hex"}
+        bind:value={() => lineColor(line), (v) => setLineColor(ap, line, v)}
+      />
+      <button
+        class="btn icon"
+        disabled={!ap[line + "Color"]}
+        onclick={() => setLineColor(ap, line, "")}
+        title="Back to the default text color">↺</button
+      >
+    </div>
+  </div>
+{/snippet}
+
+{#snippet offsetRow(title, kx, ky, lim)}
+  <div class="row">
+    <span class="aplabel">{title}</span>
+    <div class="xy">
+      <Stepper bind:value={ap[kx]} min={lim.x[0]} max={lim.x[1]} step={5} />
+      <Stepper bind:value={ap[ky]} min={lim.y[0]} max={lim.y[1]} step={5} />
+    </div>
+  </div>
+{/snippet}
+
 {#snippet themeBtn()}
   <div class="seg">
     <button
@@ -551,9 +692,24 @@
     <!-- ===== TIMERS ===== -->
     {#if pane === "timers"}
       <div class="pane">
+        <div class="modeseg tmseg">
+          {#each TIMER_PRESETS as p (p.name)}
+            <button
+              class:on={timerPreset$ === p}
+              onclick={() => {
+                customPicked = false;
+                Object.assign(s.timers, p.t);
+              }}>{p.name}</button
+            >
+          {/each}
+          <button
+            class:on={!timerPreset$}
+            onclick={() => (customPicked = true)}>Custom</button
+          >
+        </div>
         <div class="card timers">
           <div class="row">
-            <label>Work (hh:mm)</label>
+            <label>Work<span class="desc">How long you focus before a break · hours:minutes</span></label>
             <Stepper
               bind:value={s.timers.workSeconds}
               min={60}
@@ -564,7 +720,7 @@
             />
           </div>
           <div class="row">
-            <label>Break (mm:ss)</label>
+            <label>Break<span class="desc">The breathing pause after each session · minutes:seconds</span></label>
             <Stepper
               bind:value={s.timers.breakSeconds}
               min={1}
@@ -575,7 +731,7 @@
             />
           </div>
           <div class="row">
-            <label>Long break (mm:ss)</label>
+            <label>Long break<span class="desc">A longer pause every few sessions · minutes:seconds</span></label>
             <Stepper
               bind:value={s.timers.longBreakSeconds}
               min={1}
@@ -586,7 +742,7 @@
             />
           </div>
           <div class="row">
-            <label>Long break every N sessions (0 = off)</label>
+            <label>Long break after<span class="desc">Number of sessions · 0 turns long breaks off</span></label>
             <Stepper
               bind:value={s.timers.longBreakEvery}
               min={0}
@@ -600,88 +756,93 @@
       <!-- ===== PATTERNS ===== -->
     {:else if pane === "patterns"}
       <div class="pane">
-        <div class="gallery">
-          {#each s.patterns as p (p.id)}
-            <div class="gitem pat-gitem">
-              {#if s.patterns.length > 1}
-                <button
-                  class="skin-bin"
-                  title="Delete pattern"
-                  aria-label="Delete pattern"
-                  onclick={() => deletePattern(p.id)}
-                >
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-                       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 6h18M8 6V4h8v2m1 0v14a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V6M10 11v6M14 11v6" />
-                  </svg>
-                </button>
-              {/if}
-              <div
-                class="pat-main"
-                role="button"
-                tabindex="0"
-                onclick={() => openPatternEditorFor(p)}
-                onkeydown={(e) => e.key === "Enter" && openPatternEditorFor(p)}
-              >
-                <div class="gname">{p.name}</div>
-                <div class="gsummary">{phaseSummary(p.phases)}</div>
-              </div>
-              <div class="pat-modes">
-                <button
-                  class="skin-btn"
-                  class:on={s.timers.workPattern === p.id}
-                  onclick={() => (s.timers.workPattern = p.id)}>Work</button
-                >
-                <button
-                  class="skin-btn"
-                  class:on={s.timers.breakPattern === p.id}
-                  onclick={() => (s.timers.breakPattern = p.id)}>Break</button
-                >
-              </div>
-            </div>
-          {/each}
-          <div
-            class="gitem gadd"
-            role="button"
-            tabindex="0"
-            onclick={openNewPatternWindow}
-            onkeydown={(e) => e.key === "Enter" && openNewPatternWindow()}
-          >
-            <div class="gplus">+</div>
-            <div class="gsummary">New pattern</div>
+        <!-- The colored dots double as the legend for the bars below. -->
+        <div class="card">
+          <div class="ch">Words shown in the bubble</div>
+          <div class="words">
+            <label
+              ><span class="dot ph-in"></span>Inhale
+              <input class="ctl" bind:value={s.text.phases.in} placeholder="In" /></label
+            >
+            <label
+              ><span class="dot ph-out"></span>Exhale
+              <input class="ctl" bind:value={s.text.phases.out} placeholder="Out" /></label
+            >
+            <label
+              ><span class="dot ph-hold"></span>Hold
+              <input class="ctl" bind:value={s.text.phases.hold} placeholder="Hold" /></label
+            >
           </div>
         </div>
 
-        <div class="card timers">
-          <div class="row">
-            <label>Inhale</label>
-            <input class="ctl" bind:value={s.text.phases.in} placeholder="In" />
+        {#each s.patterns as p (p.id)}
+          <div class="gitem patrow">
+            <div
+              class="pat-main"
+              role="button"
+              tabindex="0"
+              title="Edit pattern"
+              onclick={() => openPatternEditorFor(p)}
+              onkeydown={(e) => e.key === "Enter" && openPatternEditorFor(p)}
+            >
+              <div class="gname">{p.name}</div>
+              <div class="pbar" title={phaseSummary(p.phases)}>
+                {#each p.phases as ph}
+                  <span
+                    class:ph-in={ph.type === "in"}
+                    class:ph-out={ph.type === "out"}
+                    style:flex-grow={ph.seconds}>{ph.seconds}</span
+                  >
+                {/each}
+              </div>
+            </div>
+            <button
+              class="skin-btn"
+              class:on={s.timers.workPattern === p.id}
+              onclick={() => (s.timers.workPattern = p.id)}>Work</button
+            >
+            <button
+              class="skin-btn brk"
+              class:on={s.timers.breakPattern === p.id}
+              onclick={() => (s.timers.breakPattern = p.id)}>Break</button
+            >
+            {#if s.patterns.length > 1}
+              <button
+                class="skin-bin"
+                title="Delete pattern"
+                aria-label="Delete pattern"
+                onclick={() => deletePattern(p.id)}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18M8 6V4h8v2m1 0v14a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V6M10 11v6M14 11v6" />
+                </svg>
+              </button>
+            {/if}
           </div>
-          <div class="row">
-            <label>Exhale</label>
-            <input
-              class="ctl"
-              bind:value={s.text.phases.out}
-              placeholder="Out"
-            />
-          </div>
-          <div class="row">
-            <label>Hold</label>
-            <input
-              class="ctl"
-              bind:value={s.text.phases.hold}
-              placeholder="Hold"
-            />
-          </div>
+        {/each}
+        <div
+          class="gitem gadd patadd"
+          role="button"
+          tabindex="0"
+          onclick={openNewPatternWindow}
+          onkeydown={(e) => e.key === "Enter" && openNewPatternWindow()}
+        >
+          <div class="gplus">+</div>
+          <div class="gsummary">New pattern</div>
         </div>
       </div>
 
-      <!-- ===== SKINS ===== -->
+<!-- ===== SKINS ===== -->
     {:else if pane === "skins"}
       <div class="pane">
         <div class="gallery skin-gallery">
           {#each allSkins as sk (sk.id)}
             <div class="gitem skin-gitem">
+              <div class="skin-tags">
+                {#if s.appearance.work.skin === sk.id}<span class="mtag">Work</span>{/if}
+                {#if s.appearance.break.skin === sk.id}<span class="mtag brk">Break</span>{/if}
+              </div>
               {#if sk.custom}
                 <button
                   class="skin-bin"
@@ -723,7 +884,7 @@
                   onclick={() => (s.appearance.work.skin = sk.id)}>Work</button
                 >
                 <button
-                  class="skin-btn"
+                  class="skin-btn brk"
                   class:on={s.appearance.break.skin === sk.id}
                   onclick={() => (s.appearance.break.skin = sk.id)}
                   >Break</button
@@ -761,6 +922,14 @@
     {:else if pane === "appearance"}
       <div class="pane">
         <div class="panehead">
+          <button
+            class="livebtn"
+            class:on={live}
+            aria-pressed={live}
+            onclick={toggleLive}
+            title="Show appearance changes in the bubble right away"
+            ><span class="livedot"></span>Live update</button
+          >
           <div class="modeseg">
             <button class:on={mode === "work"} onclick={() => (mode = "work")}
               >Work</button
@@ -772,57 +941,110 @@
           {@render themeBtn()}
         </div>
 
+        <!-- [ live preview | Bubble / Text / Position tabs ]: the preview stays put on every tab -->
         <div class="card preview">
-          <div class="preview-left">
-            <div class="apsubseg in-card">
-              <button
-                class:on={apSub === "skin"}
-                onclick={() => (apSub = "skin")}>Skin</button
+          <div class="text-stage">
+            <div
+              class="orb"
+              bind:this={previewBox}
+              style:width="{previewDiameter()}px"
+              style:height="{previewDiameter()}px"
+              style:opacity={ap.opacity}
+            ></div>
+            <div
+              class="text-sample"
+              style:font-family={ap.font}
+              style:top="calc(50% + {8 + previewDiameter() / 2 + (ap.textOffsetY ?? 0) * skinScale()}px)"
+              style:transform="translate(-50%, 0) translate({(ap.textOffsetX ??
+                0) * skinScale()}px, 0)"
+            >
+              <div
+                class="ts-big"
+                style:color={lineColor("label")}
+                style:font-size="{ap.labelSize * textScale()}px"
+                style:transform="translate({(ap.labelOffsetX ?? 0) * skinScale()}px, {(ap.labelOffsetY ??
+                  0) * skinScale()}px)"
               >
-              <button
-                class:on={apSub === "text"}
-                onclick={() => (apSub = "text")}>Text</button
+                {[
+                  ap.showPhaseLabel && s.text.phases.in,
+                  ap.showPhaseCountdown && "4",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              </div>
+              <div
+                class="ts-small"
+                style:color={lineColor("sub")}
+                style:font-size="{ap.subSize * textScale()}px"
+                style:transform="translate({(ap.subOffsetX ?? 0) * skinScale()}px, {(ap.subOffsetY ??
+                  0) * skinScale()}px)"
               >
+                {[ap.showPomodoro && "24:18", ap.showSessions && "[2]"]
+                  .filter(Boolean)
+                  .join("  ")}
+              </div>
             </div>
+          </div>
+
+          <div class="ap-side">
+            <div class="apsubseg">
+              {#each AP_TABS as t (t.id)}
+                <button class:on={apSub === t.id} onclick={() => (apSub = t.id)}
+                  >{t.label}</button
+                >
+              {/each}
+            </div>
+
             {#if apSub === "skin"}
-              <div class="prev-body">
-                <div class="prev-rail">
-                  <span class="vcap">Size</span>
+              <div class="psg">
+                {#each allSkins as sk (sk.id)}
+                  <div
+                    class="psg-item"
+                    class:selected={ap.skin === sk.id}
+                    role="button"
+                    tabindex="0"
+                    onclick={() => (ap.skin = sk.id)}
+                    onkeydown={(e) => e.key === "Enter" && (ap.skin = sk.id)}
+                  >
+                    <div
+                      class="psg-preview"
+                      use:previewSkin={{
+                        skinId: sk.id,
+                        fill: s.skinColors[sk.id],
+                      }}
+                    ></div>
+                    <div class="psg-name">{sk.name}</div>
+                  </div>
+                {/each}
+              </div>
+              <div class="aprow">
+                <span class="aplabel">Size</span>
+                <div class="sliderwrap">
                   {#if mode === "break"}
                     <input
-                      class="vrange"
                       type="range"
                       min="10"
                       max="90"
                       bind:value={ap.sizePct}
                       aria-label="Size"
                     />
-                    <span class="vlabel">{ap.sizePct}%</span>
+                    <span class="sval">{ap.sizePct}%</span>
                   {:else}
                     <input
-                      class="vrange"
                       type="range"
-                      min="60"
-                      max="480"
+                      min={BUBBLE_RANGE[0]}
+                      max={BUBBLE_RANGE[1]}
                       bind:value={ap.sizePx}
                       aria-label="Size"
                     />
-                    <span class="vlabel">{ap.sizePx}px</span>
+                    <span class="sval">{ap.sizePx}px</span>
                   {/if}
                 </div>
-                <div class="orbside">
-                  <div
-                    class="orb"
-                    bind:this={previewBox}
-                    style:width="{previewDiameter()}px"
-                    style:height="{previewDiameter()}px"
-                    style:opacity={ap.opacity}
-                  ></div>
-                </div>
-                <div class="prev-rail">
-                  <span class="vcap">Opacity</span>
+              </div>
+              <div class="aprow">
+                <span class="aplabel">Opacity</span>
+                <div class="sliderwrap">
                   <input
-                    class="vrange"
                     type="range"
                     min="20"
                     max="100"
@@ -832,491 +1054,334 @@
                       (v) => (ap.opacity = v / 100)
                     }
                   />
-                  <span class="vlabel">{Math.round(ap.opacity * 100)}%</span>
+                  <span class="sval">{Math.round(ap.opacity * 100)}%</span>
                 </div>
               </div>
-              <div class="orb-color">
-                <input
-                  type="color"
-                  class="swatch"
-                  bind:value={
-                    () => s.skinColors[ap.skin] ?? apTheme,
-                    (v) => (s.skinColors[ap.skin] = v)
-                  }
-                />
-                <input
-                  class="ctl small"
-                  bind:value={
-                    () => s.skinColors[ap.skin] ?? apTheme,
-                    (v) => (s.skinColors[ap.skin] = v)
-                  }
-                />
-                <button
-                  class="btn icon"
-                  disabled={!(ap.skin in s.skinColors)}
-                  onclick={resetColor}
-                  title="Reset color">↺</button
-                >
-              </div>
-            {:else}
-              <div class="prev-body">
-                <div class="prev-rail">
-                  <span class="vcap">Size</span>
+              <div class="aprow">
+                <span class="aplabel">Color</span>
+                <div class="colorrow">
                   <input
-                    class="vrange"
-                    type="range"
-                    min="10"
-                    max="32"
-                    bind:value={ap.labelSize}
-                    aria-label="Text size"
+                    type="color"
+                    class="swatch"
+                    aria-label="Bubble color"
+                    bind:value={
+                      () => s.skinColors[ap.skin] ?? apTheme,
+                      (v) => setSkinColor(s, ap.skin, v)
+                    }
                   />
-                  <span class="vlabel">{ap.labelSize}px</span>
-                </div>
-                <div class="text-stage">
-                  <div
-                    class="orb"
-                    bind:this={previewBox}
-                    style:width="{previewDiameter()}px"
-                    style:height="{previewDiameter()}px"
-                    style:opacity={ap.opacity}
-                  ></div>
-                  <div
-                    class="text-sample"
-                    style:font-family={ap.font}
-                    style:top="{8 + previewDiameter() + (ap.textOffsetY ?? 0) * skinScale()}px"
-                    style:transform="translate(-50%, 0) translate({(ap.textOffsetX ??
-                      0) * skinScale()}px, 0)"
+                  <input
+                    class="ctl small"
+                    aria-label="Bubble color hex"
+                    bind:value={
+                      () => s.skinColors[ap.skin] ?? apTheme,
+                      (v) => setSkinColor(s, ap.skin, v)
+                    }
+                  />
+                  <button
+                    class="btn icon"
+                    disabled={!(ap.skin in s.skinColors)}
+                    onclick={() => setSkinColor(s, ap.skin, "")}
+                    title="Reset color">↺</button
                   >
-                      <div
-                        class="ts-big"
-                        style:color={ap.labelColor || ap.textColor}
-                        style:font-size="{ap.labelSize * textScale()}px"
-                        style:transform="translate({(ap.labelOffsetX ?? 0) * skinScale()}px, {(ap.labelOffsetY ??
-                          0) * skinScale()}px)"
-                      >
-                        {[
-                          ap.showPhaseLabel && s.text.phases.in,
-                          ap.showPhaseCountdown && "4",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                      </div>
-                      <div
-                        class="ts-small"
-                        style:color={ap.subColor || ap.textColor}
-                        style:font-size="{ap.subSize * textScale()}px"
-                        style:transform="translate({(ap.subOffsetX ?? 0) * skinScale()}px, {(ap.subOffsetY ??
-                          0) * skinScale()}px)"
-                      >
-                        {[ap.showPomodoro && "24:18", ap.showSessions && "[2]"]
-                          .filter(Boolean)
-                          .join("  ")}
-                      </div>
-                  </div>
-                </div>
-                <div class="prev-rail">
-                  <span class="vcap">Sub</span>
-                  <input
-                    class="vrange"
-                    type="range"
-                    min="6"
-                    max="24"
-                    bind:value={ap.subSize}
-                    aria-label="Bottom text size"
-                  />
-                  <span class="vlabel">{ap.subSize}px</span>
                 </div>
               </div>
-              <div class="orb-color">
-                <input type="color" class="swatch" bind:value={ap.textColor} />
-                <input class="ctl small" bind:value={ap.textColor} />
-                <button
-                  class="btn icon"
-                  disabled={(ap.textColor || "").toLowerCase() === "#ffffff"}
-                  onclick={() => (ap.textColor = "#FFFFFF")}
-                  title="Reset color">↺</button
-                >
+            {:else if apSub === "text"}
+              <div class="aprow">
+                <span class="aplabel">Font</span>
+                <div class="fontdd" class:open={fontOpen}>
+                  <button
+                    type="button"
+                    class="ctl fontdd-btn"
+                    style:font-family={ap.font}
+                    onclick={() => {
+                      fontOpen = !fontOpen;
+                      fontSearch = "";
+                    }}
+                  >
+                    <span class="fontdd-cur">{ap.font}</span>
+                    <span class="fontdd-caret">▾</span>
+                  </button>
+                  {#if fontOpen}
+                    <div
+                      class="fontdd-backdrop"
+                      role="presentation"
+                      onclick={() => (fontOpen = false)}
+                    ></div>
+                    <div class="fontdd-panel">
+                      <!-- svelte-ignore a11y_autofocus -->
+                      <input
+                        class="fontdd-search"
+                        placeholder="Search fonts…"
+                        bind:value={fontSearch}
+                        autofocus
+                      />
+                      <div class="fontdd-list">
+                        {#each fontMatches as f}
+                          <div
+                            class="fontdd-opt"
+                            class:sel={ap.font === f}
+                            style:font-family={f}
+                            role="button"
+                            tabindex="0"
+                            onclick={() => {
+                              ap.font = f;
+                              fontOpen = false;
+                            }}
+                            onkeydown={(e) =>
+                              e.key === "Enter" &&
+                              ((ap.font = f), (fontOpen = false))}
+                          >
+                            {f}
+                          </div>
+                        {/each}
+                        {#if fontMatches.length === 0}<div class="fontdd-empty">
+                            No matches
+                          </div>{/if}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+              {@render lineControls("label", "Top line")}
+              {@render lineControls("sub", "Bottom line")}
+            {:else}
+              <div class="timers">
+                {#if mode === "work"}
+                  <div class="ch">Bubble on the screen</div>
+                  <div class="row">
+                    <span class="aplabel">From right edge (px)</span>
+                    <Stepper
+                      bind:value={ap.posRight}
+                      min={0}
+                      max={3000}
+                      step={10}
+                    />
+                  </div>
+                  <div class="row">
+                    <span class="aplabel">From top edge (px)</span>
+                    <Stepper bind:value={ap.posTop} min={0} max={3000} step={10} />
+                  </div>
+                {/if}
+                <div class="row xyhead">
+                  <span class="ch">Text position (px)</span>
+                  <div class="xy"><span>sideways</span><span>down</span></div>
+                </div>
+                <!-- Per line: the same keys and limits as dragging a line in the bubble's edit mode. -->
+                {@render offsetRow("Top line", "labelOffsetX", "labelOffsetY", lineOffsetRange(ap))}
+                {@render offsetRow("Bottom line", "subOffsetX", "subOffsetY", lineOffsetRange(ap))}
+                {@render offsetRow("Both lines", "textOffsetX", "textOffsetY", { x: [-1000, 1000], y: [-1000, 1000] })}
               </div>
             {/if}
           </div>
-          {#if apSub === "skin"}
-            <div class="psg">
-              {#each allSkins as sk (sk.id)}
-                <div
-                  class="psg-item"
-                  class:selected={ap.skin === sk.id}
-                  role="button"
-                  tabindex="0"
-                  onclick={() => (ap.skin = sk.id)}
-                  onkeydown={(e) => e.key === "Enter" && (ap.skin = sk.id)}
-                >
-                  <div
-                    class="psg-preview"
-                    use:previewSkin={{
-                      skinId: sk.id,
-                      fill: s.skinColors[sk.id],
-                    }}
-                  ></div>
-                  <div class="psg-name">{sk.name}</div>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <div class="psg text-controls">
-              <div class="fontdd" class:open={fontOpen}>
-                <button
-                  type="button"
-                  class="ctl fontdd-btn"
-                  style:font-family={ap.font}
-                  onclick={() => {
-                    fontOpen = !fontOpen;
-                    fontSearch = "";
-                  }}
-                >
-                  <span class="fontdd-cur">{ap.font}</span>
-                  <span class="fontdd-caret">▾</span>
-                </button>
-                {#if fontOpen}
-                  <div
-                    class="fontdd-backdrop"
-                    role="presentation"
-                    onclick={() => (fontOpen = false)}
-                  ></div>
-                  <div class="fontdd-panel">
-                    <!-- svelte-ignore a11y_autofocus -->
-                    <input
-                      class="fontdd-search"
-                      placeholder="Search fonts…"
-                      bind:value={fontSearch}
-                      autofocus
-                    />
-                    <div class="fontdd-list">
-                      {#each fontMatches as f}
-                        <div
-                          class="fontdd-opt"
-                          class:sel={ap.font === f}
-                          style:font-family={f}
-                          role="button"
-                          tabindex="0"
-                          onclick={() => {
-                            ap.font = f;
-                            fontOpen = false;
-                          }}
-                          onkeydown={(e) =>
-                            e.key === "Enter" &&
-                            ((ap.font = f), (fontOpen = false))}
-                        >
-                          {f}
-                        </div>
-                      {/each}
-                      {#if fontMatches.length === 0}<div class="fontdd-empty">
-                          No matches
-                        </div>{/if}
-                    </div>
-                  </div>
-                {/if}
-              </div>
-              <label class="chk"
-                ><input type="checkbox" bind:checked={ap.showPhaseLabel} />Phase
-                label</label
-              >
-              <label class="chk"
-                ><input
-                  type="checkbox"
-                  bind:checked={ap.showPhaseCountdown}
-                />Phase countdown</label
-              >
-              <label class="chk"
-                ><input
-                  type="checkbox"
-                  bind:checked={ap.showPomodoro}
-                />Pomodoro time</label
-              >
-              <label class="chk"
-                ><input type="checkbox" bind:checked={ap.showSessions} />Long
-                break</label
-              >
-            </div>
-          {/if}
+        </div>
+      </div>
+
+<!-- ===== BEHAVIOR ===== -->
+    {:else if pane === "behavior"}
+      <div class="pane">
+        <div class="modeseg bhseg">
+          {#each BH_TABS as t (t.id)}
+            <button class:on={bhSub === t.id} onclick={() => (bhSub = t.id)}
+              >{t.label}</button
+            >
+          {/each}
         </div>
 
-        {#if apSub === "skin"}
-          {#if mode === "work"}
-            <div class="card timers">
-              <div class="row">
-                <label>From right edge (px)</label>
-                <Stepper
-                  bind:value={ap.posRight}
-                  min={0}
-                  max={3000}
-                  step={10}
-                />
+        {#if bhSub === "general"}
+          <div class="card">
+            <div class="ch">General</div>
+            <label class="swrow"
+              >Start on boot<input
+                type="checkbox"
+                class="sw"
+                bind:checked={s.behavior.startOnBoot}
+              /></label
+            >
+            <label class="swrow"
+              >Chime on transitions<input
+                type="checkbox"
+                class="sw"
+                bind:checked={s.behavior.chimeOnTransitions}
+              /></label
+            >
+          </div>
+          <!-- The two choices the bubble's dialogs offer ("Don't show again", "Always save"),
+               so they can be changed back. -->
+          <div class="card">
+            <div class="ch">Bubble</div>
+            <label class="swrow"
+              >Remind me the app keeps running in the tray when I hide the bubble<input
+                type="checkbox"
+                class="sw"
+                bind:checked={
+                  () => !s.behavior.hideNoticeOff,
+                  (v) => (s.behavior.hideNoticeOff = !v)
+                }
+              /></label
+            >
+            <label class="swrow"
+              >Save changes without asking when closing edit mode<input
+                type="checkbox"
+                class="sw"
+                bind:checked={s.behavior.editAutoSave}
+              /></label
+            >
+          </div>
+        {:else if bhSub === "sound"}
+          <div class="card">
+            <div class="player">
+              <button
+                class="playbtn"
+                onclick={togglePreview}
+                aria-pressed={previewing}
+                aria-label={previewing ? "Stop" : "Listen"}
+                title={previewing ? "Stop" : "Listen"}>{previewing ? "■" : "▶"}</button
+              >
+              <div>
+                <div class="gname">Breathing music</div>
+                <div class="gsummary">Plays your work pattern with these choices.</div>
               </div>
-              <div class="row">
-                <label>From top edge (px)</label>
-                <Stepper bind:value={ap.posTop} min={0} max={3000} step={10} />
+            </div>
+            <label class="swrow"
+              >Play breathing music (also on the bubble's speaker button and in the tray)<input
+                type="checkbox"
+                class="sw"
+                bind:checked={s.music.on}
+              /></label
+            >
+            <div class="row">
+              <label for="music-sound">Sound</label>
+              <select id="music-sound" class="ctl" bind:value={s.music.sound}>
+                {#each SOUNDS as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
+              </select>
+            </div>
+            <div class="row">
+              <label for="music-hold">Hold style</label>
+              <div class="music-hold">
+                <select id="music-hold" class="ctl" bind:value={s.music.hold}>
+                  {#each HOLDS as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
+                </select>
+                <span class="hint">{HOLDS.find((h) => h.id === s.music.hold)?.desc}</span>
               </div>
             </div>
-          {/if}
-        {/if}
-
-        {#if apSub === "text"}
-          <div class="card timers">
             <div class="row">
-              <label>Horizontal offset (px)</label>
-              <Stepper
-                bind:value={ap.textOffsetX}
-                min={-1000}
-                max={1000}
-                step={10}
-              />
+              <label for="music-volume">Volume</label>
+              <div class="sliderwrap">
+                <input id="music-volume" type="range" min="0" max="100"
+                  bind:value={() => Math.round(s.music.volume * 100), (v) => (s.music.volume = v / 100)} />
+                <span class="sval">{Math.round(s.music.volume * 100)}%</span>
+              </div>
             </div>
             <div class="row">
-              <label>Vertical offset (px)</label>
-              <Stepper
-                bind:value={ap.textOffsetY}
-                min={-1000}
-                max={1000}
-                step={10}
-              />
+              <label for="music-room">Room</label>
+              <div class="sliderwrap">
+                <input id="music-room" type="range" min="0" max="100"
+                  bind:value={() => Math.round(s.music.room * 100), (v) => (s.music.room = v / 100)} />
+                <span class="sval">{Math.round(s.music.room * 100)}%</span>
+              </div>
             </div>
+          </div>
+        {:else}
+          <div class="card">
+            <div class="ch">Hotkeys</div>
+            {#each HOTKEY_ROWS as h (h.id)}
+              <div class="row">
+                <label for={"hk-" + h.id}>{h.label}</label>
+                <div class="hk">
+                  <input
+                    id={"hk-" + h.id}
+                    class="ctl hk-input"
+                    readonly
+                    placeholder="press keys…"
+                    value={s.hotkeys[h.id] || ""}
+                    onkeydown={(e) => recordHotkey(e, h.id)}
+                  />
+                  <button
+                    class="hk-btn"
+                    title="Clear (disable)"
+                    aria-label="Clear hotkey"
+                    onclick={() => (s.hotkeys[h.id] = null)}>✕</button
+                  >
+                  <button
+                    class="hk-btn"
+                    title="Reset to default"
+                    aria-label="Reset hotkey to default"
+                    onclick={() => (s.hotkeys[h.id] = DEFAULT_SETTINGS.hotkeys[h.id])}>↺</button
+                  >
+                </div>
+              </div>
+            {/each}
           </div>
         {/if}
       </div>
 
-      <!-- ===== BEHAVIOR ===== -->
-    {:else if pane === "behavior"}
+<!-- ===== ABOUT ===== -->
+    {:else if pane === "about"}
       <div class="pane">
-        <div class="card">
-          <div class="ch">General</div>
-          <label class="chk"
-            ><input
-              type="checkbox"
-              bind:checked={s.behavior.startOnBoot}
-            />Start on boot</label
-          >
-          <label class="chk"
-            ><input
-              type="checkbox"
-              bind:checked={s.behavior.chimeOnTransitions}
-            />Chime on transitions</label
+        <div class="about-center">
+          <img
+            src="/img/breathpause-128.png"
+            alt="BreathPause"
+            class="about-logo"
+          />
+          <div class="about-name">BreathPause</div>
+          <div class="about-ver"><span class="verpill">Version {version}</span></div>
+          <div class="about-tag">
+            An always-on-top breathing bubble. Sits in the corner and
+            breathes quietly while you work, then guides you through a
+            breathing break when the pomodoro timer runs out.
+          </div>
+          <div class="about-actions">
+            <button
+              class="btn"
+              onclick={() =>
+                openExternal("https://github.com/Markus-Wildgruber/breathpause")}
+              >GitHub</button
+            >
+            <button
+              class="btn"
+              onclick={() =>
+                openExternal("https://www.instagram.com/breathe.nice/")}
+              >Instagram</button
+            >
+            <button
+              class="btn primary"
+              onclick={() =>
+                openExternal(
+                  "https://github.com/Markus-Wildgruber/breathpause/issues/new",
+                )}>Report a problem</button
+            >
+          </div>
+          <div class="about-ver">Made by Markus Wildgruber · MIT License · © 2026</div>
+          <button
+            class="linklike"
+            aria-expanded={showCredits}
+            onclick={() => (showCredits = !showCredits)}
+            >{showCredits ? "Hide artwork credits" : "Show artwork credits"}</button
           >
         </div>
-        <!-- The two choices the bubble's dialogs offer ("Don't show again", "Always save"),
-             so they can be changed back. -->
+        {#if showCredits}
         <div class="card">
-          <div class="ch">Bubble</div>
-          <label class="chk"
-            ><input
-              type="checkbox"
-              bind:checked={
-                () => !s.behavior.hideNoticeOff,
-                (v) => (s.behavior.hideNoticeOff = !v)
-              }
-            />Remind me the app keeps running in the tray when I hide the bubble</label
-          >
-          <label class="chk"
-            ><input
-              type="checkbox"
-              bind:checked={s.behavior.editAutoSave}
-            />Save changes without asking when closing edit mode</label
-          >
-        </div>
-        <div class="card">
-          <div class="ch">Breathing music</div>
-          <label class="chk"
-            ><input type="checkbox" bind:checked={s.music.on} />Play breathing music (also on the
-            bubble's speaker button and in the tray)</label
-          >
-          <div class="row">
-            <label for="music-sound">Sound</label>
-            <select id="music-sound" class="ctl" bind:value={s.music.sound}>
-              {#each SOUNDS as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
-            </select>
-          </div>
-          <div class="row">
-            <label for="music-hold">Hold style</label>
-            <div class="music-hold">
-              <select id="music-hold" class="ctl" bind:value={s.music.hold}>
-                {#each HOLDS as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
-              </select>
-              <span class="hint">{HOLDS.find((h) => h.id === s.music.hold)?.desc}</span>
-            </div>
-          </div>
-          <div class="row">
-            <label for="music-volume">Volume</label>
-            <div class="sliderwrap">
-              <input id="music-volume" type="range" min="0" max="100"
-                bind:value={() => Math.round(s.music.volume * 100), (v) => (s.music.volume = v / 100)} />
-              <span class="sval">{Math.round(s.music.volume * 100)}%</span>
-            </div>
-          </div>
-          <div class="row">
-            <label for="music-room">Room</label>
-            <div class="sliderwrap">
-              <input id="music-room" type="range" min="0" max="100"
-                bind:value={() => Math.round(s.music.room * 100), (v) => (s.music.room = v / 100)} />
-              <span class="sval">{Math.round(s.music.room * 100)}%</span>
-            </div>
-          </div>
-          <div class="row">
-            <span class="rowlabel"></span>
-            <div>
-              <button class="btn" onclick={togglePreview} aria-pressed={previewing}
-                >{previewing ? "Stop" : "Listen"}</button
-              >
-              <span class="hint">Plays your work pattern with these choices.</span>
-            </div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="ch">Hotkeys</div>
-          {#each HOTKEY_ROWS as h (h.id)}
-            <div class="row">
-              <label for={"hk-" + h.id}>{h.label}</label>
-              <div class="hk">
-                <input
-                  id={"hk-" + h.id}
-                  class="ctl hk-input"
-                  readonly
-                  placeholder="press keys…"
-                  value={s.hotkeys[h.id] || ""}
-                  onkeydown={(e) => recordHotkey(e, h.id)}
-                />
-                <button
-                  class="hk-btn"
-                  title="Clear (disable)"
-                  aria-label="Clear hotkey"
-                  onclick={() => (s.hotkeys[h.id] = null)}>✕</button
-                >
-                <button
-                  class="hk-btn"
-                  title="Reset to default"
-                  aria-label="Reset hotkey to default"
-                  onclick={() => (s.hotkeys[h.id] = DEFAULT_SETTINGS.hotkeys[h.id])}>↺</button
-                >
+          <div class="ch">Artwork credits</div>
+          {#each CREDITS as c (c.id)}
+            <div class="credit">
+              <div class="credit-thumb" use:previewSkin={c.id}></div>
+              <div>
+                <div class="gname">{c.name}</div>
+                <div class="gsummary">
+                  {c.text}{#if c.url}{" "}<button
+                      class="linklike"
+                      onclick={() => openExternal(c.url)}>{c.source}</button
+                    >{/if} · {c.license}
+                </div>
               </div>
             </div>
           {/each}
+          <div class="gsummary credit-more">
+            Full attributions: CREDITS.md in the repository
+          </div>
         </div>
-      </div>
-
-      <!-- ===== ABOUT ===== -->
-    {:else if pane === "about"}
-      <div class="pane">
-        <div class="card">
-          <div class="about-center">
-            <img
-              src="/img/breathpause-128.png"
-              alt="BreathPause"
-              class="about-logo"
-            />
-            <div class="about-name">BreathPause</div>
-            <div class="about-ver">Version {version}</div>
-            <div class="about-tag">
-              An always-on-top breathing bubble. Sits in the corner and
-              breathes quietly while you work, then guides you through a
-              breathing break when the pomodoro timer runs out.
-            </div>
-          </div>
-          <div class="ch">Info</div>
-          <div class="row">
-            <span class="rowlabel">Made by</span><span class="ctl static"
-              >Markus Wildgruber</span
-            >
-          </div>
-          <div class="row">
-            <span class="rowlabel">License</span><span class="ctl static"
-              >MIT — © 2026 Markus Wildgruber</span
-            >
-          </div>
-          <div class="ch">Credits</div>
-          <div class="credits">
-            <div class="row credit-row">
-              <span class="rowlabel">“Cute Bear”, “Sweet Jelly”</span>
-              <span>
-                adapted from
-                <button
-                  class="linklike"
-                  onclick={() => openExternal("https://www.svgrepo.com")}
-                  >SVG Repo</button
-                > artwork (SVG Repo License)
-              </span>
-            </div>
-            <div class="row credit-row">
-              <span class="rowlabel">“Sleepy Seal”</span>
-              <span>
-                derived from public-domain art on
-                <button
-                  class="linklike"
-                  onclick={() => openExternal("https://openclipart.org")}
-                  >openclipart</button
-                >
-              </span>
-            </div>
-            <div class="row credit-row">
-              <span class="rowlabel">Full attributions</span>
-              <span>CREDITS.md in the repository</span>
-            </div>
-          </div>
-          <div class="about-social">
-            <button
-              class="social-btn"
-              title="GitHub"
-              aria-label="GitHub"
-              onclick={() =>
-                openExternal(
-                  "https://github.com/Markus-Wildgruber/breathpause",
-                )}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="22"
-                height="22"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.04-.02-2.05-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22 0 1.6-.01 2.9-.01 3.29 0 .32.22.7.83.58A12 12 0 0 0 24 12.5C24 5.87 18.63.5 12 .5z"
-                />
-              </svg>
-            </button>
-            <button
-              class="social-btn"
-              title="Instagram"
-              aria-label="Instagram"
-              onclick={() =>
-                openExternal("https://www.instagram.com/breathe.nice/")}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="22"
-                height="22"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                aria-hidden="true"
-              >
-                <rect x="2" y="2" width="20" height="20" rx="5.5" />
-                <circle cx="12" cy="12" r="4.2" />
-                <circle
-                  cx="17.6"
-                  cy="6.4"
-                  r="1.2"
-                  fill="currentColor"
-                  stroke="none"
-                />
-              </svg>
-            </button>
-          </div>
-          <button
-            class="linklike report-link"
-            onclick={() =>
-              openExternal(
-                "https://github.com/Markus-Wildgruber/breathpause/issues/new",
-              )}>Report a problem</button
-          >
-        </div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -1349,6 +1414,8 @@
     --seg: rgba(255, 255, 255, 0.08);
     --segSel: rgba(255, 255, 255, 0.92);
     --segSelFg: #1a1a1f;
+    --brk: #ffb74d;
+    --brkFg: #2b1a00;
   }
   .win[data-theme="light"] {
     --card: #f3f3f6;
@@ -1367,6 +1434,8 @@
     --seg: #e2e2ea;
     --segSel: #ffffff;
     --segSelFg: #1a1a1f;
+    --brk: #c2620a;
+    --brkFg: #ffffff;
   }
 
   .win {
@@ -1505,7 +1574,7 @@
     overflow: hidden;
     display: flex;
     align-items: stretch;
-    height: 264px; /* fixed so Skin/Text tabs are identical — nothing jumps on switch */
+    height: 404px; /* fixed so the tabs are identical — nothing jumps on switch */
     background: var(--card);
   }
   .ch {
@@ -1521,8 +1590,7 @@
     gap: 12px;
     margin: 10px 0;
   }
-  .row label,
-  .row .rowlabel {
+  .row label {
     color: var(--muted);
     font-size: 12.5px;
   }
@@ -1552,10 +1620,6 @@
   select.ctl option {
     background: var(--card);
     color: var(--fore);
-  }
-  .ctl.static {
-    border-style: dashed;
-    color: var(--muted);
   }
 
   .hint {
@@ -1654,55 +1718,15 @@
   }
 
   /* preview card: [ tabs + preview + color  |  divider  |  skins ] — left 3/5, skins 2/5 */
-  .preview-left {
-    flex: 3;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .apsubseg.in-card {
-    margin: 12px auto 8px;
-    max-width: none;
-    width: auto;
-  }
-  .apsubseg.in-card button {
-    height: 34px;
-    padding: 0 28px;
-    font-size: 14px;
-  }
-  .prev-body {
-    display: flex;
-    align-items: stretch;
-    flex: 1;
-    height: 170px; /* fixed: a max-size skin clips instead of growing the preview */
-    overflow: hidden;
-  }
   .prev-textbody {
     display: flex;
     align-items: stretch;
     flex: 1;
     min-height: 150px;
   }
-  .orbside {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 14px 0;
-  }
   .orb {
     display: grid;
     place-items: center;
-  }
-  .orb-color {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 9px;
-    padding: 10px 12px 12px;
-  }
-  .orb-color input.ctl.small {
-    width: 120px;
   }
   .tq-phases {
     display: flex;
@@ -1727,46 +1751,15 @@
   }
 
   /* vertical size/opacity rails flanking the skin preview (no dividers) */
-  .prev-rail {
-    flex: none;
-    width: 60px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 12px 6px;
-  }
-  .vcap {
-    font-size: 10.5px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .vrange {
-    writing-mode: vertical-lr;
-    direction: rtl;
-    width: 6px;
-    flex: 1;
-    min-height: 90px;
-    accent-color: var(--accent);
-  }
-  .vlabel {
-    font-size: 11px;
-    color: var(--fore);
-    white-space: nowrap;
-  }
 
   /* skin picker: right 2/5 of the preview card, behind a divider line */
   .psg {
-    flex: 2;
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
     gap: 6px;
-    align-content: flex-start;
-    padding: 12px;
-    border-left: 1px solid var(--line);
+    max-height: 150px; /* two rows, then it scrolls */
     overflow-y: auto;
+    margin-bottom: 6px;
   }
   .psg-item {
     cursor: pointer;
@@ -1806,16 +1799,19 @@
      scales with the size (its bottom anchored, growing upward). Fixed height — a max-size
      skin clips at the top rather than growing the box. */
   .text-stage {
-    flex: 1;
+    flex: none;
+    width: 190px;
     position: relative;
-    height: 170px;
     overflow: hidden;
+    border-right: 1px solid var(--line);
+    /* stands in for a desktop wallpaper, so the (usually white) bubble text reads in both themes */
+    background: linear-gradient(135deg, #27405f, #5b3f6e 60%, #a8576a);
   }
   .text-stage .orb {
     position: absolute;
     left: 50%;
-    top: 8px; /* skin top-anchored; its bottom = 8 + height, which the text is measured from */
-    transform: translateX(-50%);
+    top: 50%; /* skin centered; the text is measured from its bottom edge */
+    transform: translate(-50%, -50%);
   }
   .text-sample {
     position: absolute;
@@ -1833,17 +1829,6 @@
   .ts-small {
     font-size: 12px;
     color: var(--muted);
-  }
-  .text-controls {
-    display: flex;
-    flex-direction: column;
-    flex-wrap: nowrap;
-    gap: 10px;
-    align-content: stretch;
-    overflow-y: auto;
-  }
-  .text-controls .chk {
-    margin: 0;
   }
   .text-controls .sliderwrap {
     flex: none;
@@ -1941,8 +1926,7 @@
     border-radius: 9px;
     padding: 3px;
     gap: 2px;
-    margin: 0 auto 14px;
-    max-width: 200px;
+    margin-bottom: 10px;
   }
   .apsubseg button {
     flex: 1;
@@ -1962,27 +1946,88 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
   }
 
-  /* patterns: pattern selects + phase-label text fields combined in one card,
-     two columns split by a divider (like the appearance preview card) */
-  /* pattern tiles mirror the skins gallery: Work/Break assign buttons per tile */
-  .pat-gitem {
-    cursor: default;
+  /* patterns: one per line — name, phase bar (flex-grow = seconds), Work/Break, delete */
+  .patrow {
     display: flex;
-    flex-direction: column;
-    position: relative;
-  }
-  .pat-gitem:hover .skin-bin {
-    opacity: 1;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    cursor: default;
   }
   .pat-main {
-    cursor: pointer;
     flex: 1;
-    padding-right: 24px; /* room for the delete bin */
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
   }
-  .pat-modes {
+  .patrow .gname {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .patrow .skin-bin {
+    position: static;
+    flex: none;
+  }
+  .gadd.patadd {
+    flex-direction: row;
+    gap: 8px;
+    min-height: 0;
+  }
+  .pbar {
     display: flex;
+    gap: 2px;
+    height: 22px;
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  .pbar span {
+    flex-basis: 0;
+    min-width: 22px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 22px;
+    color: #14141a;
+    background: #b9bec7; /* hold */
+  }
+  .dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #b9bec7;
+  }
+  .pbar .ph-in,
+  .dot.ph-in {
+    background: #7bd88f;
+  }
+  .pbar .ph-out,
+  .dot.ph-out {
+    background: #b388ff;
+  }
+  .words {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .words label {
+    min-width: 0;
+    display: flex;
+    align-items: center;
     gap: 6px;
-    margin-top: 12px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  .words input.ctl {
+    flex: 1;
+    min-width: 0;
+    width: auto;
   }
 
   /* pattern gallery */
@@ -2036,7 +2081,7 @@
 
   /* skin gallery */
   .skin-gallery {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   }
   .skin-gitem {
     padding: 0 0 12px;
@@ -2047,7 +2092,7 @@
   }
   .skin-preview {
     width: 100%;
-    height: 110px;
+    height: 92px;
     display: grid;
     place-items: center;
     overflow: hidden;
@@ -2060,8 +2105,9 @@
   }
   .skin-modes {
     display: flex;
+    justify-content: center;
     gap: 6px;
-    padding: 8px 14px 0;
+    padding: 8px 6px 0;
     flex-wrap: wrap;
   }
   .skin-btn {
@@ -2164,17 +2210,6 @@
     margin: 0 auto 6px;
     line-height: 1.5;
   }
-  .credits {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.55;
-  }
-  .credits .credit-row {
-    margin: 6px 0;
-  }
-  .credits .credit-row .rowlabel {
-    font-style: italic;
-  }
   .import-error {
     color: #e05252;
     font-size: 12.5px;
@@ -2188,33 +2223,6 @@
     color: var(--accent);
     cursor: pointer;
     text-decoration: underline;
-  }
-  .report-link {
-    display: block;
-    margin: 14px auto 0;
-    text-align: center;
-    font-size: 12.5px;
-  }
-  .about-social {
-    display: flex;
-    justify-content: center;
-    gap: 10px;
-    margin-top: 12px;
-  }
-  .social-btn {
-    display: grid;
-    place-items: center;
-    width: 38px;
-    height: 38px;
-    border-radius: 9px;
-    border: 1px solid var(--line);
-    background: var(--field);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .social-btn:hover {
-    color: var(--accent);
-    border-color: var(--accent);
   }
 
   .foot {
@@ -2243,5 +2251,224 @@
   }
   .spacer {
     flex: 1;
+  }
+
+  /* work = accent, break = its own color, wherever the two are assigned */
+  .skin-btn.brk.on {
+    background: var(--brk);
+    color: var(--brkFg);
+  }
+  .skin-tags {
+    position: absolute;
+    top: 42px;
+    left: 8px;
+    z-index: 2;
+    display: flex;
+    gap: 4px;
+  }
+  .mtag {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--accentFg);
+  }
+  .mtag.brk {
+    background: var(--brk);
+    color: var(--brkFg);
+  }
+
+  /* timers */
+  .desc {
+    display: block;
+    font-size: 11.5px;
+    opacity: 0.8;
+  }
+
+  /* behavior */
+  .bhseg {
+    margin: 0 auto 14px;
+    width: 320px;
+  }
+  .tmseg {
+    width: auto;
+    margin-bottom: 14px;
+  }
+  .swrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 10px 0;
+    cursor: pointer;
+  }
+  .sw {
+    appearance: none;
+    flex: none;
+    width: 36px;
+    height: 20px;
+    margin: 0;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--seg);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .sw::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: left 0.15s;
+  }
+  .sw:checked {
+    background: var(--accent);
+  }
+  .sw:checked::after {
+    left: 18px;
+  }
+  .sw:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .player {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0 4px;
+  }
+  .player .gname {
+    margin: 0;
+  }
+  .playbtn {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 0;
+    background: var(--accent);
+    color: var(--accentFg);
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  /* about */
+  .verpill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 10px;
+    background: var(--seg);
+  }
+  .about-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 14px 0 10px;
+  }
+  .credit {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 10px 0;
+  }
+  .credit .gname {
+    margin-bottom: 1px;
+  }
+  .credit-thumb {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    overflow: hidden;
+  }
+  .credit-more {
+    margin-top: 12px;
+  }
+
+  /* appearance: right-hand side of the preview card */
+  .ap-side {
+    flex: 1;
+    min-width: 0;
+    padding: 12px 14px;
+    overflow-y: auto;
+  }
+  .aprow {
+    display: grid;
+    grid-template-columns: 74px 1fr;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+  }
+  .aplabel {
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  .aprow .sliderwrap {
+    max-width: none;
+  }
+  .ap-line {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 10px;
+  }
+  .ap-line .ch {
+    flex: 1;
+    margin: 0;
+  }
+  .ap-line .chk {
+    margin: 0;
+  }
+  .skin-gitem .skin-btn {
+    padding: 4px 9px;
+  }
+
+  .livebtn {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: var(--field);
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .livebtn.on {
+    color: var(--fore);
+    border-color: var(--accent);
+  }
+  .livedot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .livebtn.on .livedot {
+    background: #2ecc71;
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.25);
+  }
+  .xy {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .xyhead .ch {
+    margin: 0;
+  }
+  .xyhead .xy {
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
   }
 </style>

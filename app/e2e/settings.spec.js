@@ -80,6 +80,7 @@ test('Behavior: breathing music offers every sound and hold style, previews, and
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/settings.html');
   await page.locator('.rail .navitem', { hasText: 'Behavior' }).click();
+  await page.getByRole('button', { name: 'Sound', exact: true }).click();   // Behavior sub-tab
   const sound = page.getByLabel('Sound', { exact: true }), hold = page.getByLabel('Hold style');
   await expect(sound.locator('option')).toHaveCount(7);
   await expect(hold.locator('option')).toHaveCount(5);
@@ -99,4 +100,15 @@ test('Behavior: breathing music offers every sound and hold style, previews, and
   const m = await page.evaluate(() => JSON.parse(localStorage.getItem('breathpause.settings')).music);
   expect(m).toMatchObject({ on: true, sound: 'kalimba', hold: 'countdown', volume: 0.3 });
   expect(errors).toEqual([]);
+});
+
+test('Appearance: Live update saves appearance changes at once and Cancel puts them back', async ({ page }) => {
+  await page.goto('/settings.html');
+  const sizePx = () => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('breathpause.settings') || '{}').appearance?.work?.sizePx);
+  await page.getByRole('button', { name: 'Live update' }).click();
+  await page.getByRole('slider', { name: 'Size', exact: true }).fill('300');
+  await expect.poll(sizePx).toBe(300);               // written without pressing Save
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect.poll(sizePx).toBe(200);               // back to what was saved before
 });

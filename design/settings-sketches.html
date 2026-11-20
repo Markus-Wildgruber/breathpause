@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BreathPause settings sketches</title>
+<style>
+  /* Static sketches only: nothing here is wired to the app. Tokens mirror Settings.svelte. */
+  body{--bg:#0e0e11;--card:#1c1c1e;--pane:#161619;--rail:#121215;--fore:#f2f2f2;--muted:#9aa0aa;
+    --accent:#4fc3f7;--accentFg:#06222c;--line:rgba(255,255,255,.1);--field:rgba(255,255,255,.07);
+    --cardbg:rgba(255,255,255,.04);--out:#b388ff;--good:#7bd88f;--bad:#ff9a8b}
+  body[data-theme=light]{--bg:#dfe0e6;--card:#f3f3f6;--pane:#fbfbfd;--rail:#ececf2;--fore:#1a1a1f;--muted:#5a5a63;
+    --accent:#0a6cc9;--accentFg:#fff;--line:rgba(0,0,0,.12);--field:#fff;--cardbg:#fff;--out:#7a4fd1;--good:#1c7c3a;--bad:#b3402e}
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{margin:0;background:var(--bg);color:var(--fore);font:13px/1.45 "Segoe UI",system-ui,sans-serif}
+  header{position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+  header h1{font-size:15px;margin:0 12px 0 0}
+  main{padding:16px}
+  .lead{color:var(--muted);max-width:900px;margin:0 0 14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(700px,100%),1fr));gap:22px}
+  figure{margin:0;min-width:0}
+  figcaption{display:grid;gap:1px;margin-bottom:8px}
+  figcaption b{font-size:15px}
+  figcaption span{color:var(--muted)}
+  figcaption .pro{color:var(--good)} figcaption .con{color:var(--bad)}
+
+  /* window chrome */
+  .win{height:470px;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+  .wb{display:flex;flex:1;min-height:0}
+  .rail{width:118px;flex:none;background:var(--rail);border-right:1px solid var(--line);padding:10px 8px}
+  .rail div{padding:8px 10px;border-radius:8px;color:var(--muted);margin-bottom:2px}
+  .rail .sel{background:var(--accent);color:var(--accentFg);font-weight:600}
+  .pane{flex:1;min-width:0;background:var(--pane);overflow:auto;padding:14px 16px}
+  .foot{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--line)}
+
+  /* parts */
+  .c{background:var(--cardbg);border:1px solid var(--line);border-radius:12px;padding:4px 14px;margin-bottom:12px}
+  .c.pad{padding:12px 14px}
+  .hh{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:2px 0 6px}
+  .r{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+  .r:first-child,.hh+.r{border-top:0}
+  .d,.m{color:var(--muted);font-size:12px}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .col{display:flex;flex-direction:column;gap:8px}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .sp{flex:1}
+  .ctr{text-align:center;align-items:center;justify-content:center}
+  .btn,.chip,.seg button,.st button,.in{font:inherit;color:var(--fore)}
+  .btn{height:30px;padding:0 12px;border-radius:7px;background:var(--field);border:1px solid var(--line);cursor:pointer}
+  .btn.p{background:var(--accent);color:var(--accentFg);border-color:transparent;font-weight:600}
+  .btn.g{background:none;border-color:transparent;color:var(--accent)}
+  .chip{height:28px;padding:0 12px;border-radius:14px;background:var(--field);border:1px solid var(--line);cursor:pointer}
+  .chip.on,.seg button.on{background:var(--accent);color:var(--accentFg);border-color:transparent;font-weight:600}
+  .seg{display:inline-flex;background:var(--field);border-radius:9px;padding:3px;gap:2px}
+  .seg button{border:0;background:none;height:28px;padding:0 14px;border-radius:7px;cursor:pointer;color:var(--muted)}
+  .st{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:7px;background:var(--field);overflow:hidden}
+  .st button{width:28px;height:28px;border:0;background:none;cursor:pointer;color:var(--muted)}
+  .st b{min-width:74px;text-align:center;font-weight:600}
+  .in{height:30px;border-radius:7px;background:var(--field);border:1px solid var(--line);padding:0 9px}
+  select.in option{background:var(--card)}
+  input[type=range]{accent-color:var(--accent);width:100%}
+  input[type=radio]{accent-color:var(--accent);width:16px;height:16px}
+  .sw{appearance:none;width:36px;height:20px;border-radius:10px;background:var(--line);position:relative;cursor:pointer;flex:none;margin:0;transition:background .15s}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .sw:checked{background:var(--accent)} .sw:checked::after{left:18px}
+  .kbd{display:inline-block;padding:2px 7px;border-radius:5px;border:1px solid var(--line);border-bottom-width:2px;background:var(--field);font:12px Consolas,monospace}
+  .tag{font-size:11px;padding:1px 7px;border-radius:9px;background:var(--accent);color:var(--accentFg);font-weight:600}
+  .tag.b{background:var(--out);color:#fff}
+  .orb{--s:48px;--o:#4fc3f7;width:var(--s);height:var(--s);border-radius:50%;flex:none;
+    background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.55),transparent 45%),var(--o);animation:br 5s ease-in-out infinite}
+  @keyframes br{50%{transform:scale(.86)}}
+  @media (prefers-reduced-motion:reduce){.orb{animation:none}}
+  .bear{--o:#c58b5a}.jelly{--o:#f48fb1}.seal{--o:#8fa8c9}.mine{--o:#7bd88f}
+  .pb{display:flex;height:10px;border-radius:5px;overflow:hidden;gap:2px;min-width:90px}
+  .pb i{display:block}.pb .i{background:var(--accent)}.pb .hd{background:var(--muted)}.pb .o{background:var(--out)}
+  .pb.big{height:22px;border-radius:7px}
+  .pb.big i{font:600 11px/22px "Segoe UI",sans-serif;text-align:center;color:#000;font-style:normal}
+  .dash{border:1.5px dashed var(--muted);border-radius:12px;display:grid;place-items:center;text-align:center;color:var(--muted);cursor:pointer;padding:12px}
+  .tile{border:1px solid var(--line);border-radius:12px;background:var(--cardbg);padding:10px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;position:relative}
+  .tile.on,.pick.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .pick{border:1px solid var(--line);border-radius:10px;padding:8px 10px;cursor:pointer;background:var(--cardbg)}
+  .scr{position:relative;border-radius:10px;border:1px solid var(--line);overflow:hidden;
+    background:linear-gradient(135deg,#27405f,#5b3f6e 60%,#a8576a)}
+  .scr::after{content:"";position:absolute;left:0;right:0;bottom:0;height:12px;background:rgba(0,0,0,.45)}
+  .scr .lbl{color:#fff;text-align:center;font-weight:600;font-size:11px;line-height:1.2}
+  .scr .lbl small{display:block;font-weight:400;opacity:.8}
+  details{border-top:1px solid var(--line);padding:8px 0}
+  details:first-child{border-top:0}
+  summary{cursor:pointer;font-weight:600}
+  table{width:100%;border-collapse:collapse}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:left;font-weight:400}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line)}
+  .big{font-size:22px;font-weight:600}
+  .sent{font-size:19px;line-height:2.2}
+  .sent .in{font-size:17px;font-weight:600;color:var(--accent);height:34px}
+  .li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer}
+  .li.on{background:var(--field)}
+  .sw3{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);cursor:pointer;flex:none}
+</style>
+</head>
+<body data-theme="dark">
+<header>
+  <h1>BreathPause settings: 5 sketches per page</h1>
+  <div class="seg" id="pages"></div>
+  <span class="sp"></span>
+  <div class="seg" id="theme"><button class="on">Dark</button><button>Light</button></div>
+</header>
+<main>
+
+<!-- ============================ TIMERS ============================ -->
+<section class="page" id="timers" data-label="Timers">
+<p class="lead">Job of this page: set work length, break length, long-break length and how often a long break comes. Today: four number fields with the unit hidden in the label ("hh:mm", "mm:ss", "0 = off").</p>
+<div class="grid">
+
+<article class="sk" data-name="A · Presets + plain list" data-idea="One click picks a known rhythm; the list below stays editable with units written out." data-pro="Fastest for new users, smallest change from today." data-con="Presets need good names.">
+  <div class="hh">Quick start</div>
+  <div class="row" data-one style="margin-bottom:12px"><button class="chip on">Classic 25 / 5</button><button class="chip">Deep focus 50 / 10</button><button class="chip">Short 15 / 3</button><button class="chip">Custom</button></div>
+  <div class="c">
+    <div class="r"><div>Work<div class="d">How long you focus before a break</div></div><span class="st"><button>−</button><b>25 min</b><button>+</button></span></div>
+    <div class="r"><div>Breathing break<div class="d">The guided pause after each work session</div></div><span class="st"><button>−</button><b>1 min</b><button>+</button></span></div>
+    <div class="r"><div>Long break<div class="d">A longer pause every few sessions</div></div><span class="row"><input type="checkbox" class="sw" checked><span class="st"><button>−</button><b>5 min</b><button>+</button></span></span></div>
+    <div class="r"><div>Long break after</div><span class="st"><button>−</button><b>4 sessions</b><button>+</button></span></div>
+  </div>
+  <div class="m">One full round: 4 × 25 min work, 3 short breaks, 1 long break = 1 h 48 min</div>
+</article>
+
+<article class="sk" data-name="B · Cycle timeline" data-idea="The whole round drawn as one bar. Click a block to change it." data-pro="Shows how the four numbers relate; 'every N sessions' becomes visible." data-con="Short breaks are thin blocks; needs a minimum width.">
+  <div class="hh">Your round</div>
+  <div class="pb big" style="margin-bottom:6px"><i class="i" style="flex:25">25</i><i class="o" style="flex:4"></i><i class="i" style="flex:25">25</i><i class="o" style="flex:4"></i><i class="i" style="flex:25">25</i><i class="o" style="flex:4"></i><i class="i" style="flex:25">25</i><i class="hd" style="flex:9">5</i></div>
+  <div class="row m" style="margin-bottom:14px"><span class="tag">Work</span><span class="tag b">Break</span><span class="tag" style="background:var(--muted)">Long break</span><span class="sp"></span>Total 1 h 48 min</div>
+  <div class="c pad">
+    <div class="row"><b>Work session</b><span class="sp"></span><span class="big">25 min</span></div>
+    <input type="range" min="5" max="120" value="25">
+    <div class="row m"><span>5 min</span><span class="sp"></span><span>2 h</span></div>
+  </div>
+  <div class="c">
+    <div class="r">Sessions before a long break<span class="row" data-one><button class="chip">Off</button><button class="chip">2</button><button class="chip">3</button><button class="chip on">4</button><button class="chip">5</button><button class="chip">6</button></span></div>
+  </div>
+</article>
+
+<article class="sk" data-name="C · Big sliders" data-idea="One slider per duration, the value large and in plain words." data-pro="No typing, no format to learn." data-con="Exact values (e.g. 1:15) are harder to hit than with a field.">
+  <div class="c pad"><div class="row">Work<span class="sp"></span><span class="big">25 min</span></div><input type="range" min="5" max="120" value="25"></div>
+  <div class="c pad"><div class="row">Breathing break<span class="sp"></span><span class="big">1 min 00 s</span></div><input type="range" min="10" max="600" value="60"></div>
+  <div class="c pad"><div class="row">Long break<span class="sp"></span><span class="big">5 min 00 s</span></div><input type="range" min="60" max="1800" value="300"></div>
+  <div class="c pad"><div class="row">Long break every<span class="sp"></span><span class="big">4 sessions</span></div><input type="range" min="0" max="12" value="4"><div class="m">Slide to 0 to turn long breaks off</div></div>
+</article>
+
+<article class="sk" data-name="D · One sentence" data-idea="The settings read as a sentence; the values are the editable parts." data-pro="Nothing to explain: the sentence is the explanation." data-con="Needs careful wording per language if the app is translated.">
+  <div class="c pad sent">
+    Work for <input class="in" value="25 min" size="6">, then breathe for <input class="in" value="1:00" size="4">.<br>
+    After every <input class="in" value="4" size="2"> sessions, take a long break of <input class="in" value="5:00" size="4">.
+  </div>
+  <div class="row"><input type="checkbox" class="sw" checked> Long breaks on</div>
+  <p class="m">Type "90" for 90 seconds or "1:30". Fields accept both.</p>
+</article>
+
+<article class="sk" data-name="E · Preset cards" data-idea="Three ready-made rhythms as cards, 'Custom' opens the numbers." data-pro="Most people never need the numbers." data-con="Power users need one extra click.">
+  <div class="g2" data-one>
+    <div class="pick on"><b>Classic</b><div class="d">25 min work · 1 min breathe<br>long break 5 min every 4</div></div>
+    <div class="pick"><b>Deep focus</b><div class="d">50 min work · 2 min breathe<br>long break 10 min every 3</div></div>
+    <div class="pick"><b>Gentle</b><div class="d">15 min work · 1 min breathe<br>no long breaks</div></div>
+    <div class="pick"><b>Custom</b><div class="d">Set every value yourself</div></div>
+  </div>
+  <details style="margin-top:12px"><summary>Adjust the numbers</summary>
+    <div class="r">Work<span class="st"><button>−</button><b>25 min</b><button>+</button></span></div>
+    <div class="r">Breathing break<span class="st"><button>−</button><b>1 min</b><button>+</button></span></div>
+    <div class="r">Long break<span class="st"><button>−</button><b>5 min</b><button>+</button></span></div>
+    <div class="r">Long break after<span class="st"><button>−</button><b>4 sessions</b><button>+</button></span></div>
+  </details>
+</article>
+</div></section>
+
+<!-- ============================ PATTERNS ============================ -->
+<section class="page" id="patterns" data-label="Patterns">
+<p class="lead">Job of this page: see the breathing patterns, choose one for work and one for breaks, edit / add / delete, and set the words shown for in, out, hold. Today: cards with a text summary ("4s in → 4s hold") and two small Work/Break buttons per card. Bar colours: <span class="tag">in</span> <span class="tag" style="background:var(--muted)">hold</span> <span class="tag b">out</span></p>
+<div class="grid">
+
+<article class="sk" data-name="A · List with rhythm bars" data-idea="One row per pattern: a bar shows the rhythm, tags show where it is used." data-pro="Scans quickly, scales to many patterns." data-con="Two toggle tags per row can still be overlooked.">
+  <div class="row" style="margin-bottom:8px"><div class="hh" style="margin:0">Your patterns</div><span class="sp"></span><button class="btn p">+ New pattern</button></div>
+  <div class="c">
+    <div class="r"><div style="flex:1"><b>Box breathing</b><div class="d">4 in · 4 hold · 4 out · 4 hold</div></div><div class="pb" style="flex:1"><i class="i" style="flex:4"></i><i class="hd" style="flex:4"></i><i class="o" style="flex:4"></i><i class="hd" style="flex:4"></i></div><button class="chip t on">Work</button><button class="chip t">Break</button><button class="btn">Edit</button></div>
+    <div class="r"><div style="flex:1"><b>Calm</b><div class="d">4 in · 6 out</div></div><div class="pb" style="flex:1"><i class="i" style="flex:4"></i><i class="o" style="flex:6"></i></div><button class="chip t">Work</button><button class="chip t on">Break</button><button class="btn">Edit</button></div>
+    <div class="r"><div style="flex:1"><b>4-7-8</b><div class="d">4 in · 7 hold · 8 out</div></div><div class="pb" style="flex:1"><i class="i" style="flex:4"></i><i class="hd" style="flex:7"></i><i class="o" style="flex:8"></i></div><button class="chip t">Work</button><button class="chip t">Break</button><button class="btn">Edit</button></div>
+  </div>
+  <div class="c"><details><summary>Words shown in the bubble</summary><div class="row" style="margin-top:8px">In <input class="in" value="In" size="6"> Out <input class="in" value="Out" size="6"> Hold <input class="in" value="Hold" size="6"></div></details></div>
+</article>
+
+<article class="sk" data-name="B · Two slots on top" data-idea="'While working' and 'On your break' are two slots; the library sits below." data-pro="The main question (which pattern when?) is answered first." data-con="The pattern name appears twice on screen.">
+  <div class="g2">
+    <div class="c pad"><div class="hh">While you work</div><select class="in" style="width:100%"><option>Box breathing</option><option>Calm</option><option>4-7-8</option></select><div class="pb" style="margin-top:10px"><i class="i" style="flex:4"></i><i class="hd" style="flex:4"></i><i class="o" style="flex:4"></i><i class="hd" style="flex:4"></i></div><div class="d">16 s per breath</div></div>
+    <div class="c pad"><div class="hh">On your break</div><select class="in" style="width:100%"><option>Calm</option><option>Box breathing</option><option>4-7-8</option></select><div class="pb" style="margin-top:10px"><i class="i" style="flex:4"></i><i class="o" style="flex:6"></i></div><div class="d">10 s per breath</div></div>
+  </div>
+  <div class="row"><div class="hh" style="margin:0">Library</div><span class="sp"></span><button class="btn">+ New</button></div>
+  <div class="c">
+    <div class="r">Box breathing<span class="row"><button class="btn g">Edit</button><button class="btn g">Delete</button></span></div>
+    <div class="r">Calm<span class="row"><button class="btn g">Edit</button><button class="btn g">Delete</button></span></div>
+    <div class="r">4-7-8<span class="row"><button class="btn g">Edit</button><button class="btn g">Delete</button></span></div>
+  </div>
+</article>
+
+<article class="sk" data-name="C · List + editor side by side" data-idea="Pick a pattern on the left, edit it on the right. No second window." data-pro="Editing stays in context; the bar updates as you change seconds." data-con="Largest build: replaces the separate pattern editor window.">
+  <div style="display:grid;grid-template-columns:150px 1fr;gap:12px">
+    <div class="col" style="gap:2px" data-one><div class="li on">Box breathing</div><div class="li">Calm</div><div class="li">4-7-8</div><div class="li m">+ New pattern</div></div>
+    <div class="c pad">
+      <input class="in" value="Box breathing" style="width:100%;font-weight:600">
+      <div class="pb big" style="margin:10px 0"><i class="i" style="flex:4">4</i><i class="hd" style="flex:4">4</i><i class="o" style="flex:4">4</i><i class="hd" style="flex:4">4</i></div>
+      <div class="r"><select class="in"><option>Breathe in</option></select><span class="st"><button>−</button><b>4 s</b><button>+</button></span></div>
+      <div class="r"><select class="in"><option>Hold</option></select><span class="st"><button>−</button><b>4 s</b><button>+</button></span></div>
+      <div class="r"><select class="in"><option>Breathe out</option></select><span class="st"><button>−</button><b>4 s</b><button>+</button></span></div>
+      <div class="r"><button class="btn g">+ Add step</button><span class="row">Use for <button class="chip t on">Work</button><button class="chip t">Break</button></span></div>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="D · Cards with big bars" data-idea="Each pattern is a card; the bar is the picture of the breath." data-pro="Most visual, friendly for a small number of patterns." data-con="Uses the most space per pattern.">
+  <div class="g2">
+    <div class="tile on" style="align-items:stretch;text-align:left"><b>Box breathing</b><div class="pb big"><i class="i" style="flex:4">4</i><i class="hd" style="flex:4">4</i><i class="o" style="flex:4">4</i><i class="hd" style="flex:4">4</i></div><div class="row"><button class="chip t on">Work</button><button class="chip t">Break</button><span class="sp"></span><button class="btn g">Edit</button></div></div>
+    <div class="tile" style="align-items:stretch;text-align:left"><b>Calm</b><div class="pb big"><i class="i" style="flex:4">4</i><i class="o" style="flex:6">6</i></div><div class="row"><button class="chip t">Work</button><button class="chip t on">Break</button><span class="sp"></span><button class="btn g">Edit</button></div></div>
+    <div class="tile" style="align-items:stretch;text-align:left"><b>4-7-8</b><div class="pb big"><i class="i" style="flex:4">4</i><i class="hd" style="flex:7">7</i><i class="o" style="flex:8">8</i></div><div class="row"><button class="chip t">Work</button><button class="chip t">Break</button><span class="sp"></span><button class="btn g">Edit</button></div></div>
+    <div class="dash">+ New pattern</div>
+  </div>
+  <div class="row m" style="margin-top:12px">Words: In <input class="in" value="In" size="5"> Out <input class="in" value="Out" size="5"> Hold <input class="in" value="Hold" size="5"></div>
+</article>
+
+<article class="sk" data-name="E · Table with radio columns" data-idea="Work and Break are radio columns: exactly one dot per column." data-pro="Makes 'one pattern per mode' impossible to misread; very compact." data-con="Looks more technical than the other four.">
+  <table>
+    <tr><th>Pattern</th><th>Rhythm</th><th>Work</th><th>Break</th><th></th></tr>
+    <tr><td><b>Box breathing</b></td><td><div class="pb"><i class="i" style="flex:4"></i><i class="hd" style="flex:4"></i><i class="o" style="flex:4"></i><i class="hd" style="flex:4"></i></div><span class="d">4 · 4 · 4 · 4</span></td><td><input type="radio" name="ew" checked></td><td><input type="radio" name="eb"></td><td><button class="btn g">Edit</button></td></tr>
+    <tr><td><b>Calm</b></td><td><div class="pb"><i class="i" style="flex:4"></i><i class="o" style="flex:6"></i></div><span class="d">4 · 6</span></td><td><input type="radio" name="ew"></td><td><input type="radio" name="eb" checked></td><td><button class="btn g">Edit</button></td></tr>
+    <tr><td><b>4-7-8</b></td><td><div class="pb"><i class="i" style="flex:4"></i><i class="hd" style="flex:7"></i><i class="o" style="flex:8"></i></div><span class="d">4 · 7 · 8</span></td><td><input type="radio" name="ew"></td><td><input type="radio" name="eb"></td><td><button class="btn g">Edit</button></td></tr>
+  </table>
+  <div class="row" style="margin:10px 0"><button class="btn">+ New pattern</button></div>
+  <div class="c"><div class="r">Words in the bubble<span class="row"><input class="in" value="In" size="5"><input class="in" value="Out" size="5"><input class="in" value="Hold" size="5"></span></div></div>
+</article>
+</div></section>
+
+<!-- ============================ SKINS ============================ -->
+<section class="page" id="skins" data-label="Skins">
+<p class="lead">Job of this page: browse skins, choose one for work and one for breaks, import your own (SVG or ZIP), rename and delete imported ones. Coloured circles stand in for the real skin artwork.</p>
+<div class="grid">
+
+<article class="sk" data-name="A · Large gallery" data-idea="Big animated thumbnails; 'Work' and 'Break' tags sit on the skin that is in use." data-pro="Close to today, but the current choice is visible at a glance." data-con="Assigning still means finding two small buttons.">
+  <div class="g3">
+    <div class="tile on"><span class="tag" style="position:absolute;top:8px;left:8px">Work</span><div class="orb" style="--s:64px"></div><b>Orb</b><div class="row"><button class="chip t on">Work</button><button class="chip t">Break</button></div></div>
+    <div class="tile"><div class="orb bear" style="--s:64px"></div><b>Cute Bear</b><div class="row"><button class="chip t">Work</button><button class="chip t">Break</button></div></div>
+    <div class="tile on"><span class="tag b" style="position:absolute;top:8px;left:8px">Break</span><div class="orb seal" style="--s:64px"></div><b>Sleepy Seal</b><div class="row"><button class="chip t">Work</button><button class="chip t on">Break</button></div></div>
+    <div class="tile"><div class="orb jelly" style="--s:64px"></div><b>Sweet Jelly</b><div class="row"><button class="chip t">Work</button><button class="chip t">Break</button></div></div>
+    <div class="tile"><div class="orb mine" style="--s:64px"></div><input class="in" value="My skin" size="9" style="text-align:center"><div class="row"><button class="chip t">Work</button><button class="chip t">Break</button><button class="btn g">Delete</button></div></div>
+    <div class="dash">+ Import skin<br>SVG or ZIP</div>
+  </div>
+</article>
+
+<article class="sk" data-name="B · Two slots, then pick" data-idea="Select the Work or the Break slot, then click a skin to put it there." data-pro="One clear action at a time; shows both current skins large." data-con="Two steps (slot, then skin).">
+  <div class="g2" data-one>
+    <div class="pick on row" style="gap:12px"><div class="orb" style="--s:70px"></div><div><div class="hh">Work bubble</div><b>Orb</b><div class="d">Selected: pick a skin below</div></div></div>
+    <div class="pick row" style="gap:12px"><div class="orb seal" style="--s:70px"></div><div><div class="hh">Break bubble</div><b>Sleepy Seal</b><div class="d">Click to change</div></div></div>
+  </div>
+  <div class="hh" style="margin-top:14px">Skins</div>
+  <div class="row" data-one style="gap:10px">
+    <div class="tile on" style="width:84px"><div class="orb"></div>Orb</div>
+    <div class="tile" style="width:84px"><div class="orb bear"></div>Cute Bear</div>
+    <div class="tile" style="width:84px"><div class="orb seal"></div>Sleepy Seal</div>
+    <div class="tile" style="width:84px"><div class="orb jelly"></div>Sweet Jelly</div>
+    <div class="tile" style="width:84px"><div class="orb mine"></div>My skin</div>
+  </div>
+  <div class="row" style="margin-top:12px"><button class="btn">+ Import skin (SVG or ZIP)</button></div>
+</article>
+
+<article class="sk" data-name="C · List + big preview" data-idea="Skins in a list on the left; the right side shows the chosen one large with everything you can do to it." data-pro="Room for colour, rename and delete next to the preview." data-con="You see one skin at a time, not all at once.">
+  <div style="display:grid;grid-template-columns:170px 1fr;gap:12px">
+    <div class="col" style="gap:2px" data-one>
+      <div class="li on"><div class="orb" style="--s:24px"></div>Orb <span class="sp"></span><span class="tag">W</span></div>
+      <div class="li"><div class="orb bear" style="--s:24px"></div>Cute Bear</div>
+      <div class="li"><div class="orb seal" style="--s:24px"></div>Sleepy Seal <span class="sp"></span><span class="tag b">B</span></div>
+      <div class="li"><div class="orb jelly" style="--s:24px"></div>Sweet Jelly</div>
+      <div class="li"><div class="orb mine" style="--s:24px"></div>My skin</div>
+      <div class="li m">+ Import skin</div>
+    </div>
+    <div class="c pad col ctr">
+      <div class="orb" style="--s:120px"></div><b class="big">Orb</b>
+      <div class="row"><span class="m">Colour</span><span class="sw3" style="background:#4fc3f7"></span><span class="sw3" style="background:#7bd88f"></span><span class="sw3" style="background:#f48fb1"></span><span class="sw3" style="background:#ffb74d"></span><button class="btn g">Custom</button></div>
+      <div class="row"><button class="btn p">Used while working</button><button class="btn">Use on breaks</button></div>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="D · Built-in / yours + drop zone" data-idea="Two groups, and a large area to drop a file on." data-pro="Import is obvious; your own skins are easy to find and manage." data-con="Drop zone takes space once you no longer import.">
+  <div class="hh">Built-in</div>
+  <div class="row" style="gap:10px;margin-bottom:12px">
+    <div class="tile on" style="width:96px"><div class="orb"></div>Orb<span class="tag">Work</span></div>
+    <div class="tile" style="width:96px"><div class="orb bear"></div>Cute Bear<span class="m">Use…</span></div>
+    <div class="tile on" style="width:96px"><div class="orb seal"></div>Sleepy Seal<span class="tag b">Break</span></div>
+    <div class="tile" style="width:96px"><div class="orb jelly"></div>Sweet Jelly<span class="m">Use…</span></div>
+  </div>
+  <div class="hh">Your skins</div>
+  <div class="row" style="gap:10px;align-items:stretch">
+    <div class="tile" style="width:96px"><div class="orb mine"></div>My skin<span class="m">Use… · Rename · Delete</span></div>
+    <div class="dash sp">Drop an SVG or ZIP here<br>or <u>browse for a file</u></div>
+  </div>
+  <p class="m">"Use…" opens a small menu: Use while working / Use on breaks.</p>
+</article>
+
+<article class="sk" data-name="E · Carousel" data-idea="One skin large in the middle, arrows to flip through, two buttons to use it." data-pro="Shows the animation properly; playful." data-con="Slow to compare when there are many skins.">
+  <div class="col ctr" style="height:100%">
+    <div class="row" style="gap:28px"><button class="btn">‹</button><div class="orb seal" style="--s:140px"></div><button class="btn">›</button></div>
+    <b class="big">Sleepy Seal</b>
+    <div class="row"><button class="btn">Use while working</button><button class="btn p">Used on breaks</button></div>
+    <div class="row" data-one style="margin-top:8px"><div class="pick"><div class="orb" style="--s:28px"></div></div><div class="pick"><div class="orb bear" style="--s:28px"></div></div><div class="pick on"><div class="orb seal" style="--s:28px"></div></div><div class="pick"><div class="orb jelly" style="--s:28px"></div></div><div class="pick"><div class="orb mine" style="--s:28px"></div></div><div class="pick m">+ Import</div></div>
+  </div>
+</article>
+</div></section>
+
+<!-- ============================ APPEARANCE ============================ -->
+<section class="page" id="appearance" data-label="Appearance">
+<p class="lead">Job of this page: per mode (work / break) set skin, size, opacity, colour, position, and the text (font, sizes, colour, what is shown, offset); plus light/dark theme. Today: Work/Break switch, then Skin/Text sub-tabs, vertical sliders around a small preview. This is the densest page.</p>
+<div class="grid">
+
+<article class="sk" data-name="F · NEW: preview left (A) + three tabs on the right (B)" data-idea="The tall preview from A stays on the left; the right panel from A now holds B's Bubble / Text / Position tabs instead of folding sections." data-pro="Preview never moves, every tab fits without scrolling, one click between groups." data-con="Preview is the tall narrow one, so it shows the bubble but not where it sits on the screen.">
+  <div class="row" style="margin-bottom:10px"><div class="seg"><button class="on">Work</button><button>Break</button></div><span class="sp"></span><div class="seg"><button class="on">Dark</button><button>Light</button></div></div>
+  <div style="display:grid;grid-template-columns:190px 1fr;gap:12px">
+    <div class="scr col ctr" style="height:320px"><div class="orb" style="--s:84px"></div><div class="lbl">In 4<small>24:18 [2]</small></div></div>
+    <div data-tabs>
+      <div class="seg" style="display:flex"><button class="on" style="flex:1">Bubble</button><button style="flex:1">Text</button><button style="flex:1">Position</button></div>
+      <div class="tab c" style="margin-top:8px">
+        <div class="r">Skin<span class="row" data-one><div class="pick on"><div class="orb" style="--s:24px"></div></div><div class="pick"><div class="orb bear" style="--s:24px"></div></div><div class="pick"><div class="orb seal" style="--s:24px"></div></div><div class="pick"><div class="orb jelly" style="--s:24px"></div></div></span></div>
+        <div class="r">Size<span class="row"><input type="range" value="40" style="width:150px"><b>200 px</b></span></div>
+        <div class="r">Opacity<span class="row"><input type="range" value="90" style="width:150px"><b>90 %</b></span></div>
+        <div class="r">Colour<span class="row"><span class="sw3" style="background:#4fc3f7"></span><span class="sw3" style="background:#7bd88f"></span><span class="sw3" style="background:#f48fb1"></span><button class="btn g">Custom</button><button class="btn g">Reset</button></span></div>
+      </div>
+      <div class="tab c" style="margin-top:8px" hidden>
+        <div class="r">Font<select class="in"><option>Segoe UI</option></select></div>
+        <div class="r">Show<span class="row"><button class="chip t on">Phase label</button><button class="chip t on">Countdown</button><button class="chip t on">Pomodoro time</button><button class="chip t">Long break</button></span></div>
+        <div class="r">Top line size<span class="row"><input type="range" value="50" style="width:150px"><b>18 px</b></span></div>
+        <div class="r">Bottom line size<span class="row"><input type="range" value="40" style="width:150px"><b>12 px</b></span></div>
+        <div class="r">Colour<span class="row"><span class="sw3" style="background:#fff"></span><span class="sw3" style="background:#4fc3f7"></span><span class="sw3" style="background:#ffb74d"></span><button class="btn g">Custom</button></span></div>
+      </div>
+      <div class="tab c" style="margin-top:8px" hidden>
+        <div class="hh" style="margin-top:8px">Bubble on the screen (work only)</div>
+        <div class="r">From the right edge<span class="st"><button>−</button><b>40 px</b><button>+</button></span></div>
+        <div class="r">From the top edge<span class="st"><button>−</button><b>40 px</b><button>+</button></span></div>
+        <div class="hh" style="margin-top:8px">Text relative to the bubble</div>
+        <div class="r">Sideways<span class="st"><button>−</button><b>0 px</b><button>+</button></span></div>
+        <div class="r">Up / down<span class="st"><button>−</button><b>0 px</b><button>+</button></span></div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="A · Preview left, sections right" data-idea="The preview never moves; settings fold into Bubble, Text and Position." data-pro="One place for everything, only one section open at a time." data-con="Accordion hides options until opened.">
+  <div class="row" style="margin-bottom:10px"><div class="seg"><button class="on">Work</button><button>Break</button></div><span class="sp"></span><div class="seg"><button class="on">Dark</button><button>Light</button></div></div>
+  <div style="display:grid;grid-template-columns:190px 1fr;gap:12px">
+    <div class="scr col ctr" style="height:300px"><div class="orb" style="--s:84px"></div><div class="lbl">In 4<small>24:18 [2]</small></div></div>
+    <div class="c">
+      <details open><summary>Bubble</summary>
+        <div class="r">Skin<select class="in"><option>Orb</option><option>Cute Bear</option></select></div>
+        <div class="r">Size<input type="range" value="40" style="width:150px"></div>
+        <div class="r">See-through<input type="range" value="90" style="width:150px"></div>
+        <div class="r">Colour<span class="row"><span class="sw3" style="background:#4fc3f7"></span><span class="sw3" style="background:#7bd88f"></span><span class="sw3" style="background:#f48fb1"></span><button class="btn g">Reset</button></span></div>
+      </details>
+      <details><summary>Text</summary><div class="m">Font, sizes, colour, what is shown</div></details>
+      <details><summary>Position on screen</summary><div class="m">Distance from the top and right edge</div></details>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="B · Screen on top, tabs below" data-idea="A small picture of your screen shows where the bubble sits; three tabs below hold the controls." data-pro="Position and size make sense immediately." data-con="The screen picture costs height; fewer controls visible at once.">
+  <div class="row" style="margin-bottom:8px"><div class="seg"><button class="on">Work</button><button>Break</button></div></div>
+  <div class="scr" style="height:150px;margin-bottom:10px"><div style="position:absolute;top:14px;right:22px" class="col ctr"><div class="orb" style="--s:38px"></div><div class="lbl">In 4<small>24:18</small></div></div></div>
+  <div data-tabs>
+    <div class="seg"><button class="on">Bubble</button><button>Text</button><button>Position</button></div>
+    <div class="tab c" style="margin-top:8px">
+      <div class="r">Skin<span class="row" data-one><div class="pick on"><div class="orb" style="--s:24px"></div></div><div class="pick"><div class="orb bear" style="--s:24px"></div></div><div class="pick"><div class="orb seal" style="--s:24px"></div></div><div class="pick"><div class="orb jelly" style="--s:24px"></div></div></span></div>
+      <div class="r">Size<input type="range" value="40" style="width:220px"></div>
+      <div class="r">See-through<input type="range" value="90" style="width:220px"></div>
+    </div>
+    <div class="tab c" style="margin-top:8px" hidden>
+      <div class="r">Font<select class="in"><option>Segoe UI</option></select></div>
+      <div class="r">Show<span class="row"><button class="chip t on">Phase word</button><button class="chip t on">Countdown</button><button class="chip t on">Timer</button><button class="chip t">Sessions</button></span></div>
+      <div class="r">Text size<input type="range" value="50" style="width:220px"></div>
+    </div>
+    <div class="tab c" style="margin-top:8px" hidden>
+      <div class="r">From the right edge<span class="st"><button>−</button><b>40 px</b><button>+</button></span></div>
+      <div class="r">From the top edge<span class="st"><button>−</button><b>40 px</b><button>+</button></span></div>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="C · Work and Break side by side" data-idea="Both modes shown at once in two columns; no mode switch to forget." data-pro="You always know which mode you are editing and can compare them." data-con="Half the width per mode, so only the main controls fit; rest behind 'More'.">
+  <div class="g2">
+    <div class="c pad col"><div class="row"><b>While working</b><span class="sp"></span><span class="m">small, in the corner</span></div>
+      <div class="scr col ctr" style="height:96px"><div class="orb" style="--s:40px"></div><div class="lbl">In 4</div></div>
+      <div class="row">Skin <select class="in sp"><option>Orb</option></select></div>
+      <div class="row">Size <input type="range" value="35" class="sp" style="width:auto"></div>
+      <div class="row">See-through <input type="range" value="90" class="sp" style="width:auto"></div>
+      <button class="btn g">More: text, position…</button></div>
+    <div class="c pad col"><div class="row"><b>On your break</b><span class="sp"></span><span class="m">large, centred</span></div>
+      <div class="scr col ctr" style="height:96px"><div class="orb seal" style="--s:64px"></div><div class="lbl">Out 6</div></div>
+      <div class="row">Skin <select class="in sp"><option>Sleepy Seal</option></select></div>
+      <div class="row">Size <input type="range" value="60" class="sp" style="width:auto"></div>
+      <div class="row">See-through <input type="range" value="100" class="sp" style="width:auto"></div>
+      <button class="btn g">More: text…</button></div>
+  </div>
+  <div class="row m">Theme of this window <div class="seg"><button class="on">Dark</button><button>Light</button></div></div>
+</article>
+
+<article class="sk" data-name="D · Edit on the picture" data-idea="Drag the bubble to move it, drag its corner to resize, click the text to change it. Numbers sit in a narrow column." data-pro="Most direct: you change the thing itself, not a field about it." data-con="Most work to build; overlaps with the bubble's own edit mode.">
+  <div class="row" style="margin-bottom:8px"><div class="seg"><button class="on">Work</button><button>Break</button></div><span class="sp"></span><span class="m">Drag to move · corner to resize · click text to edit</span></div>
+  <div style="display:grid;grid-template-columns:1fr 150px;gap:12px">
+    <div class="scr" style="height:310px">
+      <div style="position:absolute;top:26px;right:40px;padding:8px;border:1.5px dashed #fff;border-radius:8px" class="col ctr">
+        <div class="orb" style="--s:70px"></div><div class="lbl">In 4<small>24:18 [2]</small></div>
+        <span style="position:absolute;right:-5px;bottom:-5px;width:10px;height:10px;background:#fff;border-radius:2px"></span>
+      </div>
+      <div class="row" style="position:absolute;left:14px;bottom:24px;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:9px"><span class="sw3" style="background:#4fc3f7"></span><span class="sw3" style="background:#7bd88f"></span><span class="sw3" style="background:#f48fb1"></span><input type="range" value="90" style="width:80px"><button class="chip">Skin ▾</button></div>
+    </div>
+    <div class="c">
+      <div class="r">Size<b>200 px</b></div><div class="r">Right<b>40 px</b></div><div class="r">Top<b>40 px</b></div><div class="r">Opacity<b>90 %</b></div><div class="r">Font<b>Segoe UI</b></div>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="E · Simple first, details on demand" data-idea="Four plain choices cover most needs; exact numbers live under 'More options'." data-pro="Calm first impression, hard to get lost." data-con="S/M/L steps are coarser than today's slider (kept under More).">
+  <div class="row" style="margin-bottom:10px"><div class="seg"><button class="on">Work</button><button>Break</button></div><span class="sp"></span><div class="orb" style="--s:44px"></div></div>
+  <div class="c">
+    <div class="r">Skin<span class="row" data-one><div class="pick on"><div class="orb" style="--s:26px"></div></div><div class="pick"><div class="orb bear" style="--s:26px"></div></div><div class="pick"><div class="orb seal" style="--s:26px"></div></div><div class="pick"><div class="orb jelly" style="--s:26px"></div></div></span></div>
+    <div class="r">Size<div class="seg"><button>Small</button><button class="on">Medium</button><button>Large</button><button>Huge</button></div></div>
+    <div class="r">Colour<span class="row"><span class="sw3" style="background:#4fc3f7"></span><span class="sw3" style="background:#7bd88f"></span><span class="sw3" style="background:#f48fb1"></span><span class="sw3" style="background:#ffb74d"></span><button class="btn g">Custom</button></span></div>
+    <div class="r">Show in the bubble<span class="row"><button class="chip t on">Phase word</button><button class="chip t on">Countdown</button><button class="chip t on">Timer</button><button class="chip t">Sessions</button></span></div>
+  </div>
+  <div class="c"><details><summary>More options</summary><div class="m">Exact size in px, opacity, position from the edges, font, text sizes, text colour and offsets</div></details></div>
+</article>
+</div></section>
+
+<!-- ============================ BEHAVIOR ============================ -->
+<section class="page" id="behavior" data-label="Behavior">
+<p class="lead">Job of this page: start on boot, chime, two bubble reminders, breathing music (on, sound, hold style, volume, room, listen) and five hotkeys. Today: one long scroll of checkboxes, dropdowns and key fields. Sound names and key combinations below are placeholders.</p>
+<div class="grid">
+
+<article class="sk" data-name="A · Switch list with explanations" data-idea="Every setting is a row with a switch and one line that says what it does." data-pro="Familiar from phone settings; each option explains itself." data-con="Still a long scroll.">
+  <div class="hh">General</div>
+  <div class="c">
+    <div class="r"><div>Start with Windows<div class="d">BreathPause opens when you sign in</div></div><input type="checkbox" class="sw" checked></div>
+    <div class="r"><div>Chime<div class="d">A soft sound when work or a break begins</div></div><input type="checkbox" class="sw" checked></div>
+    <div class="r"><div>Tray reminder<div class="d">Tell me the app keeps running when I hide the bubble</div></div><input type="checkbox" class="sw" checked></div>
+    <div class="r"><div>Save bubble edits automatically<div class="d">Don't ask when leaving edit mode</div></div><input type="checkbox" class="sw"></div>
+  </div>
+  <div class="hh">Breathing music</div>
+  <div class="c">
+    <div class="r"><div>Play music that follows your breath</div><input type="checkbox" class="sw" checked></div>
+    <div class="r">Sound<span class="row"><select class="in"><option>Soft pad</option></select><button class="btn">▶ Listen</button></span></div>
+    <div class="r">Volume<input type="range" value="60" style="width:200px"></div>
+  </div>
+  <div class="hh">Shortcuts</div>
+  <div class="c"><div class="r">Start / stop timer<span class="row"><span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd">S</span><button class="btn g">Change</button></span></div></div>
+</article>
+
+<article class="sk" data-name="B · Three tabs" data-idea="General, Sound and Shortcuts become tabs: each fits without scrolling." data-pro="Short pages; easy to find 'the sound stuff'." data-con="A second level of navigation next to the left menu.">
+  <div data-tabs>
+    <div class="seg"><button class="on">General</button><button>Sound</button><button>Shortcuts</button></div>
+    <div class="tab c" style="margin-top:10px">
+      <div class="r">Start with Windows<input type="checkbox" class="sw" checked></div>
+      <div class="r">Chime when work or a break begins<input type="checkbox" class="sw" checked></div>
+      <div class="r">Remind me the app stays in the tray<input type="checkbox" class="sw" checked></div>
+      <div class="r">Save bubble edits without asking<input type="checkbox" class="sw"></div>
+    </div>
+    <div class="tab c" style="margin-top:10px" hidden>
+      <div class="r">Breathing music<input type="checkbox" class="sw" checked></div>
+      <div class="r">Sound<select class="in"><option>Soft pad</option></select></div>
+      <div class="r">While holding<select class="in"><option>Keep the note</option></select></div>
+      <div class="r">Volume<input type="range" value="60" style="width:220px"></div>
+      <div class="r">Room (echo)<input type="range" value="30" style="width:220px"></div>
+      <div class="r"><span class="m">Plays your work pattern</span><button class="btn">▶ Listen</button></div>
+    </div>
+    <div class="tab c" style="margin-top:10px" hidden>
+      <div class="r">Start / stop timer<span class="row"><span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd">S</span></span></div>
+      <div class="r">Pause / resume<span class="row"><span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd">P</span></span></div>
+      <div class="r">Skip<span class="row"><span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd">K</span></span></div>
+      <div class="r">Open settings<span class="row"><span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd">O</span></span></div>
+      <div class="r">Hide / show bubble<span class="row"><span class="kbd">Ctrl</span><span class="kbd">Alt</span><span class="kbd">H</span></span></div>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="C · Music as a player" data-idea="The music block looks like a small player: big play button, sounds as buttons you can try." data-pro="Invites trying sounds; the most-used part gets the most room." data-con="General switches are pushed to a compact strip.">
+  <div class="c pad">
+    <div class="row"><button class="btn p" style="width:44px;height:44px;border-radius:50%">▶</button><div><b>Breathing music</b><div class="d">Follows your work pattern</div></div><span class="sp"></span><input type="checkbox" class="sw" checked></div>
+    <div class="row" data-one style="margin:10px 0"><button class="chip on">Soft pad</button><button class="chip">Bowl</button><button class="chip">Flute</button><button class="chip">Waves</button></div>
+    <div class="g2"><div>Volume<input type="range" value="60"></div><div>Room<input type="range" value="30"></div></div>
+    <div class="row" style="margin-top:6px">While holding <div class="seg"><button class="on">Keep note</button><button>Fade</button><button>Silence</button></div></div>
+  </div>
+  <div class="g2">
+    <div class="c"><div class="r">Start with Windows<input type="checkbox" class="sw" checked></div><div class="r">Chime<input type="checkbox" class="sw" checked></div></div>
+    <div class="c"><div class="r">Tray reminder<input type="checkbox" class="sw" checked></div><div class="r">Auto-save edits<input type="checkbox" class="sw"></div></div>
+  </div>
+  <div class="c"><div class="r">Shortcuts<span class="row"><span class="m">Start</span><span class="kbd">Ctrl+Alt+S</span><span class="m">Pause</span><span class="kbd">Ctrl+Alt+P</span><button class="btn g">All 5…</button></span></div></div>
+</article>
+
+<article class="sk" data-name="D · Search + one flat list" data-idea="A search field on top; type 'sound' or 'key' and the list narrows." data-pro="Fast once you know what you want; works for every page if made global." data-con="Search is overkill for about 15 settings unless it covers all pages.">
+  <input class="in" placeholder="Search settings…  e.g. sound, start, shortcut" style="width:100%;margin-bottom:10px">
+  <div class="c">
+    <div class="hh" style="margin-top:8px">General</div>
+    <div class="r">Start with Windows<input type="checkbox" class="sw" checked></div>
+    <div class="r">Chime when work or a break begins<input type="checkbox" class="sw" checked></div>
+    <div class="hh" style="margin-top:8px">Bubble</div>
+    <div class="r">Tray reminder when hiding the bubble<input type="checkbox" class="sw" checked></div>
+    <div class="r">Save bubble edits without asking<input type="checkbox" class="sw"></div>
+    <div class="hh" style="margin-top:8px">Breathing music</div>
+    <div class="r">Play breathing music<input type="checkbox" class="sw" checked></div>
+    <div class="r">Sound<select class="in"><option>Soft pad</option></select></div>
+    <div class="r">Volume<input type="range" value="60" style="width:200px"></div>
+  </div>
+</article>
+
+<article class="sk" data-name="E · Two columns + sound strip" data-idea="Switches left, shortcuts right as a cheat sheet, music along the bottom." data-pro="Everything visible without scrolling or tabs." data-con="Tight; breaks down if more settings are added.">
+  <div class="g2">
+    <div class="c"><div class="hh" style="margin-top:8px">Switches</div>
+      <div class="r">Start with Windows<input type="checkbox" class="sw" checked></div>
+      <div class="r">Chime<input type="checkbox" class="sw" checked></div>
+      <div class="r">Tray reminder<input type="checkbox" class="sw" checked></div>
+      <div class="r">Auto-save bubble edits<input type="checkbox" class="sw"></div>
+    </div>
+    <div class="c"><div class="hh" style="margin-top:8px">Shortcuts (click to change)</div>
+      <div class="r">Start / stop<span class="kbd">Ctrl+Alt+S</span></div>
+      <div class="r">Pause<span class="kbd">Ctrl+Alt+P</span></div>
+      <div class="r">Skip<span class="kbd">Ctrl+Alt+K</span></div>
+      <div class="r">Settings<span class="kbd">Ctrl+Alt+O</span></div>
+      <div class="r">Hide bubble<span class="kbd">Ctrl+Alt+H</span></div>
+    </div>
+  </div>
+  <div class="c pad row"><input type="checkbox" class="sw" checked><b>Music</b><select class="in"><option>Soft pad</option></select><span class="m">Vol</span><input type="range" value="60" style="width:90px"><span class="m">Room</span><input type="range" value="30" style="width:70px"><button class="btn">▶</button></div>
+</article>
+</div></section>
+
+<!-- ============================ ABOUT ============================ -->
+<section class="page" id="about" data-label="About">
+<p class="lead">Job of this page: name, version, what the app is, who made it, license, credits, links (GitHub, Instagram, report a problem). Today: logo, text, two dashed read-only fields, credits rows, two icon buttons.</p>
+<div class="grid">
+
+<article class="sk" data-name="A · Centered, three buttons" data-idea="Logo, version and one sentence; the three things you can do are labelled buttons." data-pro="Icons-only links become readable actions." data-con="Credits are one click away.">
+  <div class="col ctr" style="padding-top:8px">
+    <div class="orb" style="--s:76px"></div><b class="big">BreathPause</b><span class="tag">Version 0.1.0</span>
+    <div class="m" style="max-width:360px">A breathing bubble that sits in the corner while you work and guides you through a break when the timer runs out.</div>
+    <div class="row"><button class="btn">GitHub</button><button class="btn">Instagram</button><button class="btn p">Report a problem</button></div>
+    <div class="m">Made by Markus Wildgruber · MIT License · © 2026</div>
+  </div>
+  <div class="c" style="margin-top:12px"><details><summary>Credits for artwork</summary><div class="m">Cute Bear, Sweet Jelly: adapted from SVG Repo. Sleepy Seal: public-domain art from openclipart.</div></details></div>
+</article>
+
+<article class="sk" data-name="B · Two columns" data-idea="Identity on the left, facts on the right." data-pro="Everything visible at once, no folding." data-con="Looks more like a data sheet.">
+  <div style="display:grid;grid-template-columns:180px 1fr;gap:14px">
+    <div class="col ctr"><div class="orb" style="--s:84px"></div><b class="big">BreathPause</b><span class="m">Version 0.1.0</span><button class="btn p">Report a problem</button></div>
+    <div class="c">
+      <div class="r"><span class="m">Made by</span>Markus Wildgruber</div>
+      <div class="r"><span class="m">License</span>MIT, © 2026</div>
+      <div class="r"><span class="m">Source</span><button class="btn g">GitHub</button></div>
+      <div class="r"><span class="m">Follow</span><button class="btn g">Instagram</button></div>
+      <div class="r"><span class="m">Cute Bear, Sweet Jelly</span>SVG Repo</div>
+      <div class="r"><span class="m">Sleepy Seal</span>openclipart</div>
+    </div>
+  </div>
+</article>
+
+<article class="sk" data-name="C · Small header + link list" data-idea="A one-line header, then a list where every row is something you can open." data-pro="Clear what is clickable; easy to extend." data-con="Least personality.">
+  <div class="row" style="margin-bottom:12px"><div class="orb" style="--s:44px"></div><div><b class="big">BreathPause</b><div class="m">Version 0.1.0 · by Markus Wildgruber</div></div></div>
+  <div class="c">
+    <div class="r">Report a problem<span class="m">›</span></div>
+    <div class="r">Source code on GitHub<span class="m">›</span></div>
+    <div class="r">Follow on Instagram<span class="m">›</span></div>
+    <div class="r">Artwork credits<span class="m">›</span></div>
+    <div class="r">License<span class="m">MIT ›</span></div>
+  </div>
+</article>
+
+<article class="sk" data-name="D · The bubble says hello" data-idea="The breathing bubble itself is the page; text is kept to a minimum." data-pro="Shows the product instead of describing it." data-con="Credits and license need a second screen or a scroll.">
+  <div class="col ctr" style="height:100%">
+    <div class="orb" style="--s:150px"></div>
+    <b class="big">BreathPause <span class="m" style="font-size:13px;font-weight:400">0.1.0</span></b>
+    <div class="m">Breathe while you work.</div>
+    <div class="row"><button class="btn g">GitHub</button><button class="btn g">Instagram</button><button class="btn g">Credits</button><button class="btn g">License</button><button class="btn g">Report a problem</button></div>
+  </div>
+</article>
+
+<article class="sk" data-name="E · About / Credits / License tabs" data-idea="Three short tabs instead of one mixed card." data-pro="Legal text and credits get proper room." data-con="Tabs for very little content.">
+  <div data-tabs>
+    <div class="seg"><button class="on">About</button><button>Credits</button><button>License</button></div>
+    <div class="tab col ctr" style="margin-top:16px"><div class="orb" style="--s:70px"></div><b class="big">BreathPause</b><span class="m">Version 0.1.0 · Made by Markus Wildgruber</span><div class="row"><button class="btn">GitHub</button><button class="btn">Instagram</button><button class="btn p">Report a problem</button></div></div>
+    <div class="tab c" style="margin-top:10px" hidden><div class="r"><span class="m">Cute Bear, Sweet Jelly</span>adapted from SVG Repo</div><div class="r"><span class="m">Sleepy Seal</span>public-domain art, openclipart</div><div class="r"><span class="m">Full list</span>CREDITS.md</div></div>
+    <div class="tab c pad" style="margin-top:10px" hidden><b>MIT License</b><div class="m">© 2026 Markus Wildgruber. Permission is hereby granted, free of charge, to any person obtaining a copy…</div></div>
+  </div>
+</article>
+</div></section>
+</main>
+
+<script>
+  const pages = [...document.querySelectorAll('.page')];
+  const NAV = pages.map(p => [p.id, p.dataset.label]);
+
+  // Wrap every sketch in the settings window (menu, pane, footer) plus a caption.
+  document.querySelectorAll('.sk').forEach(a => {
+    const id = a.closest('.page').id, d = a.dataset, fig = document.createElement('figure');
+    fig.innerHTML = `<figcaption><b>${d.name}</b><span>${d.idea}</span><span class="pro">+ ${d.pro}</span><span class="con">− ${d.con}</span></figcaption>
+      <div class="win"><div class="wb"><nav class="rail">${NAV.map(([i, l]) => `<div class="${i === id ? 'sel' : ''}">${l}</div>`).join('')}</nav><div class="pane"></div></div>
+      <div class="foot"><button class="btn">Quit app</button><button class="btn">Reset</button><span class="sp"></span><button class="btn">Cancel</button><button class="btn p">Save</button></div></div>`;
+    fig.querySelector('.pane').append(...a.childNodes);
+    a.replaceWith(fig);
+  });
+
+  const show = id => pages.forEach(p => (p.hidden = id !== 'all' && p.id !== id));
+  document.getElementById('pages').innerHTML =
+    NAV.map(([i, l], n) => `<button data-p="${i}" class="${n ? '' : 'on'}">${l}</button>`).join('') + '<button data-p="all">All</button>';
+  show(NAV[0][0]);
+
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.seg>button,[data-one]>*');
+    if (b) {
+      const sibs = [...b.parentNode.children];
+      sibs.forEach(x => x.classList.toggle('on', x === b));
+      if (b.dataset.p) show(b.dataset.p);
+      if (b.parentNode.id === 'theme') document.body.dataset.theme = b.textContent.toLowerCase();
+      const t = b.parentNode.parentNode;
+      if (t.matches('[data-tabs]')) t.querySelectorAll(':scope>.tab').forEach((p, j) => (p.hidden = j !== sibs.indexOf(b)));
+      return;
+    }
+    e.target.closest('.chip.t')?.classList.toggle('on');
+  });
+</script>
+</body>
+</html>

@@ -18,6 +18,7 @@ class FakeAudioContext {
   }
   resume() { this.state = 'running'; return Promise.resolve(); }
   suspend() { this.state = 'suspended'; return Promise.resolve(); }
+  close() { this.state = 'closed'; return Promise.resolve(); }
 }
 
 const BOX = [
@@ -83,4 +84,19 @@ test('musicStep: never starts music while the timer is paused', () => {
   assert.equal(step({ paused: true, keyChanged: true }), 'stop');
   assert.equal(step({ paused: true, playing: false }), 'none');
   assert.equal(step({ paused: true, playing: false, keyChanged: true }), 'none');
+});
+
+test('dispose silences for good: the audio is closed, nothing keeps playing', () => {
+  globalThis.window = { AudioContext: FakeAudioContext };
+  let made = null;
+  window.AudioContext = class extends FakeAudioContext { constructor() { const c = super(); made = c; return c; } };
+  const m = createMusic();
+  m.start([{ type: 'inhale', seconds: 4 }, { type: 'exhale', seconds: 4 }], 0);
+  m.dispose();
+  assert.equal(made.state, 'closed');
+  assert.equal(m.playing, false);
+  assert.equal(m.running, false);
+  m.stop();                          // safe to call afterwards (late handlers)
+  m.start([{ type: 'inhale', seconds: 4 }], 0);   // a late handler must not bring it back
+  assert.equal(m.playing, false);
 });
