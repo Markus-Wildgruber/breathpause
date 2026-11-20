@@ -52,3 +52,11 @@ test('releases page: every published version newest first, with its notes and on
   assert.match(html, />Windows installer<.*>Windows, no install</s);
   assert.doesNotMatch(html, /\.sig|latest\.json/);
 });
+
+test('site: "$" patterns in release notes stay as written', () => {
+  const notes = '<p>Run <code>echo $&amp; $\' $` $$</code></p>';
+  const raw = "<p>a $& b $' c $` d $$</p>";
+  const news = parts(render(T, [rel('v1.0.0', { body_html: raw })]))[4];
+  assert.ok(news.includes(raw), news);
+  assert.ok(renderReleases('{{RELEASES}}', [rel('v1.0.0', { body_html: notes })]).includes(notes));
+});

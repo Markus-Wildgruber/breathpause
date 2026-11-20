@@ -168,12 +168,14 @@
   .win{height:100vh;display:flex;flex-direction:column;overflow:hidden;
        background:var(--card);color:var(--fore);font:13px/1.45 "Segoe UI",system-ui,sans-serif}
   .pane{flex:1;overflow:auto;padding:18px 20px;background:var(--pane)}
+  .pane h2{margin:2px 0 0;font-size:18px;font-weight:600}
   .panehead{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:14px}
 
   .card{background:var(--cardbg);border:1px solid var(--line);border-radius:12px;
     padding:6px 16px 14px;margin:0 0 14px}
   .ch{font-size:13px;font-weight:600;margin:14px 0 4px;opacity:.9}
   .row{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:12px;margin:10px 0}
+  .row label{color:var(--muted);font-size:12.5px}
   .ctl{height:30px;border-radius:7px;background:var(--field);border:1px solid var(--line);
     color:var(--fore);padding:0 9px;font:inherit;font-size:13px}
   select.ctl option{background:var(--card);color:var(--fore)}

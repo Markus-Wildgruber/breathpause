@@ -463,32 +463,53 @@
       customSkins: x.customSkins,
       music: x.music,
     });
+  // Whether the bubble needs a push: the same parts, but imported skins only by id and name
+  // (their SVG text never changes after import), so a slider tick doesn't re-serialize every SVG.
+  const liveKey = (x) =>
+    JSON.stringify({
+      appearance: x.appearance,
+      skinColors: x.skinColors,
+      music: x.music,
+      skins: (x.customSkins || []).map((c) => [c.id, c.name]),
+    });
   let live = $state(true);
   let liveBase = livePart(saved),
-    livePushed = liveBase; // what the bubble has; "" forces the next push
+    livePushed = liveBase, // what was last saved for the bubble (Cancel compares against it)
+    pushedKey = liveKey(saved); // liveKey of what the bubble has; "" forces the next push
   const saveLive = (json) => saveSettings({ ...loadSettings(), ...JSON.parse(json) });
   async function pushAppearance(json) {
     saveLive(json);
     livePushed = json;
     await emitEvent("appearance-live");
   }
-  // The other direction: a change made in the bubble's edit mode while Live update is on.
-  // Saved here, but not sent back — the bubble already shows it.
+  // The other direction: a change made in the bubble's edit mode (or a drag) while Live update
+  // is on. Saved here, but not sent back: the bubble already shows it. A drag sends many in a
+  // row, so the save waits until they stop.
+  let bubbleSave = null;
   function liveFromBubble({ payload }) {
     if (!live || !payload) return;
     applyBubbleChanges(s, payload);
-    livePushed = livePart(s);
-    saveLive(livePushed);
+    pushedKey = liveKey(s);
+    clearTimeout(bubbleSave);
+    bubbleSave = setTimeout(() => {
+      livePushed = livePart(s);
+      saveLive(livePushed);
+    }, 300);
   }
   function toggleLive() {
     live = !live;
-    if (live) livePushed = ""; // switched on: send the current values over
+    if (live) pushedKey = ""; // switched on: send the current values over
   }
   $effect(() => {
     if (!live) return;
-    const json = livePart(s);
-    if (json === livePushed) return;
-    const timer = setTimeout(() => live && pushAppearance(json), 80); // one push per burst of slider ticks
+    const key = liveKey(s);
+    if (key === pushedKey) return;
+    // one push per burst of slider ticks
+    const timer = setTimeout(() => {
+      if (!live) return;
+      pushedKey = key;
+      pushAppearance(livePart(s));
+    }, 80);
     return () => clearTimeout(timer);
   });
 
@@ -497,6 +518,7 @@
   // Rust close this window before it exits.
   async function undoLive() {
     live = false;
+    clearTimeout(bubbleSave); // a pending bubble save must not land after the undo
     if (liveBase && liveBase !== livePushed) await pushAppearance(liveBase);
   }
 
@@ -517,8 +539,10 @@
     await close();
   }
 
+  // Imported skins are the user's files, not settings: Reset keeps them. (With Live update on,
+  // Reset is saved at once, so dropping them here would lose them even without Save.)
   function onReset() {
-    s = structuredClone(DEFAULT_SETTINGS);
+    s = { ...structuredClone(DEFAULT_SETTINGS), customSkins: s.customSkins };
     theme = s.theme || osTheme;
   }
 
@@ -599,6 +623,9 @@
         });
         unlistenBubble = await listen("bubble-settings-saved", refreshBubbleEdits);
         unlistenEdit = await listen("bubble-edit-live", liveFromBubble);
+        // Now listening: a bubble already in edit mode sends its unsaved edits, so this window's
+        // first live push doesn't overwrite them with the stored values.
+        await emitEvent("settings-opened");
       })();
     }
 
@@ -635,7 +662,11 @@
   function refreshBubbleEdits({ payload }) {
     if (!payload) return;
     applyBubbleChanges(s, payload);
-    if (live) livePushed = livePart(s); // the bubble saved it itself: nothing to send back
+    if (live) {
+      // the bubble saved it itself: nothing to send back
+      livePushed = livePart(s);
+      pushedKey = liveKey(s);
+    }
     if (liveBase) {
       // ...and Cancel must not undo it
       const base = { ...JSON.parse(liveBase), behavior: {} };
@@ -1435,7 +1466,7 @@
                 </div>
                 <div class="uprow">
                   {#if updKind === "standalone"}
-                    <span class="gsummary">Download the new exe and replace this one.</span>
+                    <span class="gsummary">Download the new version and replace this one.</span>
                     <button class="btn primary" onclick={() => openExternal(releaseUrl(upd.version))}>Download</button>
                   {:else}
                     <span class="gsummary">BreathPause restarts when it's done.</span>

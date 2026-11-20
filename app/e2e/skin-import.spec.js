@@ -77,3 +77,19 @@ test('a bare SVG still imports as a recolor-only skin', async ({ page }) => {
   await expect(page.locator('input.gname-edit')).toHaveValue('plain-cat');
   await expect(page.locator('.import-error')).toHaveCount(0);
 });
+
+test('Reset keeps imported skins (Live update saves it at once, so it must not drop them)', async ({ page }) => {
+  await openSkinsPane(page);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'zip-bear.zip', mimeType: 'application/zip', buffer: makeSkinZip(),
+  });
+  await expect(page.locator('input.gname-edit')).toHaveValue('Zip Bear');
+  const storedSkins = () => page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('breathpause.settings') || '{}').customSkins || []).map((c) => c.name));
+  await expect.poll(storedSkins).toEqual(['Zip Bear']);      // live-saved after the import
+
+  await page.getByRole('button', { name: 'Reset', exact: true }).click();
+  await expect(page.locator('input.gname-edit')).toHaveValue('Zip Bear');
+  await page.waitForTimeout(300);                            // past the live save's debounce
+  expect(await storedSkins()).toEqual(['Zip Bear']);
+});

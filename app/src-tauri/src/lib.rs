@@ -67,8 +67,9 @@ fn dotted_tray_icon() -> Option<tauri::image::Image<'static>> {
   Some(tauri::image::Image::new_owned(px, w as u32, h as u32))
 }
 
-// Installed (NSIS installer, winget, macOS .app) or the standalone exe. Only installed copies
-// may run the updater: on a standalone exe it would install a second copy beside it.
+// Installed (NSIS installer, winget, macOS .app in a writable place) or "standalone" (the
+// standalone exe, or a Mac copy run from the .dmg). Only installed copies may run the updater:
+// on a standalone exe it would install a second copy beside it.
 #[tauri::command]
 fn install_kind() -> &'static str {
   #[cfg(windows)]
@@ -82,7 +83,16 @@ fn install_kind() -> &'static str {
   }
   #[cfg(target_os = "macos")]
   {
-    "installed"
+    // Run straight from the mounted .dmg, or from a quarantined copy macOS moved to a random
+    // read-only path (App Translocation): the bundle can't be replaced in place there.
+    let path = std::env::current_exe()
+      .map(|p| p.to_string_lossy().into_owned())
+      .unwrap_or_default();
+    if path.starts_with("/Volumes/") || path.contains("/AppTranslocation/") {
+      "standalone"
+    } else {
+      "installed"
+    }
   }
   #[cfg(not(any(windows, target_os = "macos")))]
   {

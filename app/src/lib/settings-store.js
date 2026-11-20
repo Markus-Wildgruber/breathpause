@@ -10,14 +10,14 @@ function modeDefaults(overrides) {
     sizePx: 200,                // work: orb diameter in px (window sizes to fit)
     sizePct: 45,                // break: orb diameter as % of screen height (fullscreen, centered)
     opacity: 0.95,
-    font: 'Segoe UI',
+    font: 'Segoe UI',           // shared default; per-line fonts override it (see migrateShared)
     labelSize: 16,             // phase label (big text) size
     subSize: 13,               // pomodoro/sessions (bottom text) size
     showPhaseLabel: true,
     showPhaseCountdown: true,
     showPomodoro: true,
     showSessions: false,
-    textColor: '#FFFFFF',
+    textColor: '',              // '' = the skin's own text color (no control since 0.2.0; see migrateShared)
     posRight: 40,               // distance from right edge of primary monitor (px)
     posTop: 40,                 // distance from top edge (px)
     textOffsetX: 0,             // text block horizontal offset (px)
@@ -27,9 +27,9 @@ function modeDefaults(overrides) {
     labelOffsetY: 0,
     subOffsetX: 0,
     subOffsetY: 0,
-    labelColor: '',             // '' = use textColor
+    labelColor: '',             // '' = use textColor, else the skin's text color
     subColor: '',
-    labelFont: '',              // '' = use font
+    labelFont: '',              // '' = use font (the shared default)
     subFont: '',
     ...overrides,
   };
@@ -145,6 +145,25 @@ export function mergePatch(base, patch) {
   return base;
 }
 
+// Since 0.2.0 there is no control for the shared text color and font, only per line. A shared
+// value someone chose in 0.1.x moves into the lines that have none of their own (same look), and
+// the shared one goes back to its default, so the lines' ↺ really returns to the skin's color.
+// The old defaults (#FFFFFF, Segoe UI) were never a choice and are just dropped.
+const DEFAULT_FONT = 'Segoe UI';
+export function migrateShared(ap) {
+  if (ap.textColor && ap.textColor.toUpperCase() !== '#FFFFFF') {
+    ap.labelColor ||= ap.textColor;
+    ap.subColor ||= ap.textColor;
+  }
+  ap.textColor = '';
+  if (ap.font && ap.font !== DEFAULT_FONT) {
+    ap.labelFont ||= ap.font;
+    ap.subFont ||= ap.font;
+  }
+  ap.font = DEFAULT_FONT;
+  return ap;
+}
+
 export function loadSettings() {
   const base = structuredClone(DEFAULT_SETTINGS);
   try {
@@ -155,6 +174,7 @@ export function loadSettings() {
         for (const m of MODES) {
           if (raw.appearance[m] && typeof raw.appearance[m] === 'object') {
             Object.assign(base.appearance[m], raw.appearance[m]);
+            migrateShared(base.appearance[m]);
           }
         }
       }

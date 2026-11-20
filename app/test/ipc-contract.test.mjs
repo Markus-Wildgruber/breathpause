@@ -92,6 +92,13 @@ test('updater: install_kind is registered, and update/restart are allowed', () =
   assert.match(conf.plugins.updater.pubkey, /^[A-Za-z0-9+/=]{40,}$/, 'pubkey is the key text, not a path');
 });
 
+test('closing windows: onCloseRequested destroys the window itself, so allow-destroy is granted', () => {
+  // Tauri's JS onCloseRequested calls window.destroy() after the handler unless it prevents the
+  // close; without core:window:allow-destroy the settings window's title-bar X does nothing.
+  if (!jsSources.includes('onCloseRequested')) return;
+  assert.ok(capability.permissions.includes('core:window:allow-destroy'));
+});
+
 test('browser args: every window uses the same WebView2 flags (mixed flags fail to open)', () => {
   const conf = JSON.parse(read('src-tauri/tauri.conf.json'));
   const bubble = conf.app.windows.find((w) => w.label === 'bubble');

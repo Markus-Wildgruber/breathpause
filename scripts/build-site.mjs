@@ -49,12 +49,13 @@ export function render(template, releases) {
   </section>`
     : '';
 
+  // Functions, not strings: a "$&" or "$'" in release notes must stay as written.
   return template
-    .replace('{{DOWNLOADS}}', hero)
-    .replace('{{VERSION}}', esc(version || '–'))
-    .replace('{{WIN}}', win)
-    .replace('{{MAC}}', mac)
-    .replace('{{NEWS}}', news);
+    .replace('{{DOWNLOADS}}', () => hero)
+    .replace('{{VERSION}}', () => esc(version || '–'))
+    .replace('{{WIN}}', () => win)
+    .replace('{{MAC}}', () => mac)
+    .replace('{{NEWS}}', () => news);
 }
 
 const date = (iso) =>
@@ -84,7 +85,7 @@ export function renderReleases(template, releases) {
     <div><div class="notes">${notes}</div>${files ? `<div class="files">${files}</div>` : ''}</div>
   </article>`;
   }).join('\n  ');
-  return template.replace('{{RELEASES}}', list || '<p class="sub">No releases yet.</p>');
+  return template.replace('{{RELEASES}}', () => list || '<p class="sub">No releases yet.</p>');
 }
 
 async function main() {

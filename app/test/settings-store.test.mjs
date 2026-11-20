@@ -40,16 +40,18 @@ test('defaults carry the current schema (in/out labels + text offsets)', () => {
   }
 });
 
-test('per-line text fields (bubble edit mode) default to no offset and the shared color', () => {
+test('per-line text fields (bubble edit mode) default to no offset; a stored shared color moves into the lines', () => {
   setStored({ appearance: { work: { textColor: '#FF0000' } }, behavior: { startOnBoot: true } });
   const s = loadSettings();
   for (const m of MODES) {
     for (const k of ['labelOffsetX', 'labelOffsetY', 'subOffsetX', 'subOffsetY']) {
       assert.equal(s.appearance[m][k], 0);
     }
-    assert.equal(s.appearance[m].labelColor, '');   // '' = use textColor
-    assert.equal(s.appearance[m].subColor, '');
+    assert.equal(s.appearance[m].textColor, '');    // no shared color control since 0.2.0
   }
+  assert.equal(s.appearance.work.labelColor, '#FF0000');   // same look as before (migrateShared)
+  assert.equal(s.appearance.work.subColor, '#FF0000');
+  assert.equal(s.appearance.break.labelColor, '');         // '' = the skin's text color
   assert.equal(s.behavior.startOnBoot, true);       // stored wins
   assert.equal(s.behavior.hideNoticeOff, false);    // new flags defaulted
   assert.equal(s.behavior.editAutoSave, false);
@@ -245,4 +247,18 @@ test('modeKey maps break to break and everything else to work', () => {
   assert.equal(modeKey('break'), 'break');
   assert.equal(modeKey('work'), 'work');
   assert.equal(modeKey('anything'), 'work');
+});
+
+test('migrateShared: a chosen shared text color / font moves into the lines; old defaults are dropped', async () => {
+  const { migrateShared } = await import('../src/lib/settings-store.js');
+  // chosen in 0.1.x: same look afterwards, and the shared values are free again
+  const a = migrateShared({ textColor: '#ff0000', labelColor: '', subColor: '#00ff00', font: 'Georgia', labelFont: '', subFont: '' });
+  assert.deepStrictEqual(
+    [a.textColor, a.labelColor, a.subColor, a.font, a.labelFont, a.subFont],
+    ['', '#ff0000', '#00ff00', 'Segoe UI', 'Georgia', 'Georgia']);
+  // the old defaults were never a choice: lines stay on "default" (= the skin's text color)
+  const b = migrateShared({ textColor: '#FFFFFF', labelColor: '', subColor: '', font: 'Segoe UI', labelFont: '', subFont: '' });
+  assert.deepStrictEqual([b.textColor, b.labelColor, b.subColor, b.labelFont], ['', '', '', '']);
+  // running it again changes nothing
+  assert.deepStrictEqual(migrateShared({ ...a }), a);
 });

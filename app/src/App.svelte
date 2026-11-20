@@ -5,7 +5,7 @@
   import Timefmt from './core/timefmt.js';
   import Pattern from './core/pattern.js';
   import { loadSkin, loadSkinById, mountSkin, skinChoices } from './lib/skin.js';
-  import { setupHoverDrag, setHoverDragActive, setPinned } from './lib/interactivity.js';
+  import { setupHoverDrag, setHoverDragActive, setPinned, userDragging, endUserDrag } from './lib/interactivity.js';
   import { loadSettings, saveSettings, mergePatch, modeKey, bubbleChanges } from './lib/settings-store.js';
   import { editLayout, editMargin } from './lib/edit-layout.js';
   import { BUBBLE_RANGE, SIZE_RANGE, LINE_PARTS, lineOffsetRange, setSkinColor, setLineColor, parseHex, baseTextColor } from './lib/appearance-edit.js';
@@ -121,12 +121,11 @@
 
   // Work: small click-through bubble parked in a corner.
   // Break: fullscreen, fully interactive frosted overlay (sized/centered via CSS).
-  // ownMove > 0 while (and shortly after) the window is laid out from code, so those moves are
-  // not taken for the user dragging the bubble.
-  let ownMove = 0;
+  // Laying the window out from code ends any user drag, so its moves aren't saved as one
+  // (moves only count between a press on the bubble and endUserDrag, see interactivity.js).
   async function applyWindowForMode(mode) {
-    ownMove++;
-    try { await layoutWindow(mode); } finally { setTimeout(() => ownMove--, 250); }
+    endUserDrag();
+    await layoutWindow(mode);
   }
   async function layoutWindow(mode) {
     if (!('__TAURI_INTERNALS__' in window)) return;
@@ -669,7 +668,9 @@
         Object.assign(settings.appearance.work, saved.appearance.work);
         Object.assign(settings.appearance.break, saved.appearance.break);
         settings.skinColors = saved.skinColors;
-        const skinsChanged = JSON.stringify(saved.customSkins) !== JSON.stringify(settings.customSkins);
+        // By id and name: an imported skin's SVG never changes, so its text needn't be compared.
+        const skinIds = (list) => (list || []).map((c) => `${c.id}\n${c.name}`).join('\n');
+        const skinsChanged = skinIds(saved.customSkins) !== skinIds(settings.customSkins);
         if (skinsChanged) {
           settings.customSkins = saved.customSkins;
           for (const k of Object.keys(skins)) delete skins[k];
@@ -680,13 +681,22 @@
         if (!editing && currentMode === 'work' && place() !== hadPlace) await applyWindowForMode('work');
       });
 
+      // A settings window opened during edit mode starts from the stored values: give it the
+      // unsaved edits, so its first live push doesn't overwrite them.
+      listen('settings-opened', () => {
+        if (!editing) return;
+        const state = editState();
+        editSent = JSON.stringify(state);
+        emitEvent('bubble-edit-live', state);
+      });
+
       // Persist manual drags (work only): keep the saved corner offset in sync with reality.
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       let moveTimer, liveSentAt = 0;
       getCurrentWindow().onMoved(({ payload: { x, y } }) => {
         // Only the user's own drags in work mode: the break is fullscreen, and edit mode and
         // layouts move the window from code.
-        if (currentMode !== 'work' || ownMove || editing || destroyed) return;
+        if (currentMode !== 'work' || !userDragging() || editing || destroyed) return;
         const where = () => {
           const dpr = window.devicePixelRatio || 1;   // x/y are physical px, the rest CSS px
           return {
@@ -702,6 +712,7 @@
         }
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
+          endUserDrag();                     // settled: the next move needs a new press
           if (editing || destroyed) return;
           const pos = where();
           Object.assign(settings.appearance.work, pos);

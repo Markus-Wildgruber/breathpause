@@ -145,8 +145,10 @@ jobs:
   # The draft gets release-notes/<tag>.md as its notes (written for users, reviewed in the PR;
   # the check job made sure it exists). Publish the draft when it looks right: the website
   # (pages.yml) and the app's "What's new" then show these notes.
+  # Also when one platform's build failed: whatever was uploaded still gets its notes.
   notes:
     needs: [check, build]
+    if: ${{ !cancelled() && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -156,4 +158,10 @@ jobs:
       - name: Fill the draft's notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ needs.check.outputs.tag }}" --notes-file "release-notes/${{ needs.check.outputs.tag }}.md"
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::warning::No draft release for $TAG: every build failed before uploading."
+            exit 0
+          fi
+          gh release edit "$TAG" --notes-file "release-notes/$TAG.md"
