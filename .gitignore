@@ -9,3 +9,6 @@ tmp/
 .claude/skills/gitnexus/
 
 .claude/skills/gitnexus-*/
+
+# built GitHub Pages site (scripts/build-site.mjs)
+_site/

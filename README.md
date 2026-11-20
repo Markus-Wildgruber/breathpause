@@ -27,7 +27,7 @@ Everything stays on your computer. The only thing BreathPause sends out is a onc
 
 ## Install
 
-Grab the latest version from the [Releases page](https://github.com/Markus-Wildgruber/breathpause/releases).
+Grab the latest version from the [BreathPause website](https://markus-wildgruber.github.io/breathpause/) or the [Releases page](https://github.com/Markus-Wildgruber/breathpause/releases).
 
 **Windows:** run `breathpause_x.y.z_x64-setup.exe`. No admin rights needed. If you'd rather not install anything, the `standalone.exe` runs on its own.
 

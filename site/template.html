@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BreathPause: a breathing bubble for your desktop</title>
+<meta name="description" content="BreathPause keeps a small breathing bubble on your screen while you work and guides short breathing breaks between focus sessions. Free and open source for Windows and macOS.">
+<meta property="og:title" content="BreathPause">
+<meta property="og:description" content="A small breathing bubble that paces your focus sessions. Free for Windows and macOS.">
+<meta property="og:image" content="img/break.png">
+<link rel="icon" href="favicon.ico">
+<link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#"><img src="logo.png" alt="" width="28" height="28">BreathPause</a>
+    <div class="right"><div class="links"><a href="#how">How it works</a><a href="#questions">Questions</a><a href="releases.html">Releases</a><a href="#download">Download</a></div><div class="theme" role="group" aria-label="Color theme"><button type="button" data-set="light" aria-label="Light" title="Light">☀</button><button type="button" data-set="dark" aria-label="Dark" title="Dark">☾</button></div></div>
+  </nav>
+
+  <header>
+    <div>
+      <h1>Breathe while you work.</h1>
+      <p class="lede">A small bubble in the corner of your screen breathes slowly while you focus. When it's time for a break, it helps you take a few calm breaths.</p>
+      <div class="dl" id="dl">{{DOWNLOADS}}</div>
+      <p class="meta">Free and open source · Windows 10/11 and macOS · Version {{VERSION}}</p>
+    </div>
+    <div class="hero-shot"><img src="img/break.png" width="1920" height="1120" alt="A BreathPause break: a sleepy seal breathing in the middle of a softened screen"></div>
+  </header>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p class="sub">BreathPause combines a focus timer with guided breathing. It stays out of your way until you need it.</p>
+    <div class="steps">
+      <div class="step">
+        <div><span class="num">1</span><h3>Work with a calm companion</h3><p>The bubble sits on top of your windows, but clicks pass straight through it. It breathes slowly and shows how much focus time is left. Hover over it to move it, change it or hide it.</p></div>
+        <div class="shot"><img src="img/bubble.png" width="840" height="640" alt="The bubble showing the inhale phase and the remaining focus time" loading="lazy"></div>
+      </div>
+      <div class="step">
+        <div><span class="num">2</span><h3>Take a real break</h3><p>When the timer runs out, the screen softens and the bubble grows. Breathe along for a few minutes: in when it grows, out when it shrinks. If you really need to get back early, press Esc.</p></div>
+        <div class="shot"><img src="img/break.png" width="1920" height="1120" alt="The break screen: a large sleepy seal breathing in the middle of a softened screen" loading="lazy"></div>
+      </div>
+      <div class="step">
+        <div><span class="num">3</span><h3>Make it yours</h3><p>Pick a look, a size and a color, and see every change in the bubble right away. Set your own focus and break times, and choose different looks for work and for breaks.</p></div>
+        <div class="shot"><img src="img/settings-appearance.png" width="1520" height="1200" alt="The Appearance settings: a live preview next to skins, size, opacity and color" loading="lazy"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Breathing patterns that work</h2>
+    <p class="sub">Three well-known patterns are built in. Use one for focusing and another for breaks, or build your own from inhale, hold and exhale.</p>
+    <div class="patterns">
+      <div class="pat"><h3>Coherent breathing</h3><div class="bar"><span class="in" style="flex:5.5">5.5</span><span class="out" style="flex:5.5">5.5</span></div><p>Slow, even breaths, about five a minute. Easy to follow while you keep working.</p></div>
+      <div class="pat"><h3>Box breathing</h3><div class="bar"><span class="in" style="flex:4">4</span><span class="hold" style="flex:4">4</span><span class="out" style="flex:4">4</span><span class="hold" style="flex:4">4</span></div><p>In, hold, out, hold, four seconds each. Steady and simple to remember.</p></div>
+      <div class="pat"><h3>4-7-8</h3><div class="bar"><span class="in" style="flex:4">4</span><span class="hold" style="flex:7">7</span><span class="out" style="flex:8">8</span></div><p>A long hold and an even longer exhale. Good for winding down on a break.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Everything else</h2>
+    <ul class="features">
+      <li><b>Breathing music</b><span>Soft sounds that rise and fall with each breath. Turn them on or off from the bubble.</span></li>
+      <li><b>Four looks, or your own</b><span>An orb, a sleepy seal, a bear and a jellyfish, in any color. You can also import your own SVG.</span></li>
+      <li><b>Keyboard shortcuts</b><span>Set your own keys to pause, skip or hide the bubble from any app.</span></li>
+      <li><b>Pauses with you</b><span>The timer stops when you hide the bubble, and on Windows also while your PC is locked.</span></li>
+      <li><b>Starts with your computer</b><span>If you like, it's there every morning without you thinking about it.</span></li>
+      <li><b>No account, no tracking</b><span>Everything stays on your computer.</span></li>
+    </ul>
+  </section>
+
+  <section id="download">
+    <h2>Download</h2>
+    <p class="sub">Free, no account needed. Installed copies keep themselves up to date.</p>
+    <div class="platforms">
+      <div class="platform"><h3>Windows</h3><p>For Windows 10 and 11. Installs for your user only, no admin rights needed.</p>{{WIN}}</div>
+      <div class="platform"><h3>macOS</h3><p>One download for Apple Silicon and Intel Macs. Open it and drag BreathPause into Applications.</p>{{MAC}}</div>
+    </div>
+    <p class="small" style="margin-top:18px">BreathPause isn't code-signed yet, so the first launch shows a warning. On Windows, click <b>More info → Run anyway</b>. On a Mac, right-click the app and choose <b>Open</b>. Older versions are on <a href="https://github.com/Markus-Wildgruber/breathpause/releases">GitHub</a>.</p>
+  </section>
+
+  <section id="questions">
+    <h2>Questions</h2>
+    <details><summary>Is it really free?</summary><p>Yes. BreathPause is open source under the MIT license, with no ads, subscriptions or paid features.</p></details>
+    <details><summary>Does it collect any data?</summary><p>No. There's no account and no tracking. The only time it goes online is a once-a-day check for a new version, which you can turn off in Settings › Behavior.</p></details>
+    <details><summary>Why does Windows or macOS warn me when I open it?</summary><p>The app isn't code-signed yet: that's a paid certificate that tells your system who made it. The code is public on GitHub, and every download is built there automatically from that code.</p></details>
+    <details><summary>Will the bubble get in my way?</summary><p>It's small, and clicks pass through it to whatever is underneath. You can make it smaller or see-through, move it anywhere, or hide it from the tray icon or with a shortcut.</p></details>
+    <details><summary>Can I skip a break?</summary><p>Yes. Press Esc or the ✕ in the corner and confirm. You can also pause the timer, or set a shortcut to skip ahead.</p></details>
+    <details><summary>Is there a version for Linux?</summary><p>Not yet. Many Linux desktops don't let an app place itself on the screen the way the bubble needs to, so it needs more work first.</p></details>
+    <details><summary>How do I uninstall it?</summary><p>On Windows, use Settings › Apps like any other program; for the no-install version, just delete the file. On a Mac, drag BreathPause from Applications to the Trash.</p></details>
+  </section>
+
+  {{NEWS}}
+
+  <footer>
+    Made by Markus Wildgruber · <a href="https://github.com/Markus-Wildgruber/breathpause">Source code</a> · <a href="https://github.com/Markus-Wildgruber/breathpause/issues/new">Report a problem</a> · <a href="releases.html">Release notes</a> · MIT License
+  </footer>
+</div>
+<script>
+  // Put the visitor's own system first (the page is the same static file for everyone).
+  (function () {
+    var mac = /Mac/i.test(navigator.platform || navigator.userAgent);
+    var dl = document.getElementById('dl');
+    var first = dl.querySelector(mac ? '[data-os="mac"]' : '[data-os="win"]');
+    if (!first) return;
+    dl.querySelectorAll('.btn').forEach(function (b) { b.classList.add('alt'); });
+    first.classList.remove('alt');
+    dl.prepend(first);
+  })();
+</script>
+</body>
+</html>
