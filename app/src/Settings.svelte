@@ -24,6 +24,8 @@
     lineOffsetRange,
     setSkinColor,
     setLineColor,
+    parseHex,
+    baseTextColor,
   } from "./lib/appearance-edit.js";
   import Pattern from "./core/pattern.js";
   import { SOUNDS, HOLDS, createMusic } from "./lib/music.js";
@@ -31,7 +33,14 @@
   const inTauri =
     typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-  let s = $state(loadSettings());
+  const saved = loadSettings();
+  let s = $state(saved);
+
+  async function emitEvent(name, payload) {
+    if (!inTauri) return;
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit(name, payload);
+  }
   // Saved theme wins; OS theme is the fallback
   const osTheme = matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
@@ -227,10 +236,7 @@
           .map((x) => x.name),
       }),
     );
-    if (inTauri) {
-      const { emit } = await import("@tauri-apps/api/event");
-      await emit("open-pattern-editor");
-    }
+    await emitEvent("open-pattern-editor");
   }
 
   async function openNewPatternWindow() {
@@ -250,10 +256,7 @@
         existingNames: [...names],
       }),
     );
-    if (inTauri) {
-      const { emit } = await import("@tauri-apps/api/event");
-      await emit("open-pattern-editor");
-    }
+    await emitEvent("open-pattern-editor");
   }
 
   // Delete a pattern (never the last one); re-point any work/break selection, persist now.
@@ -263,7 +266,7 @@
     if (s.timers.workPattern === id) s.timers.workPattern = s.patterns[0]?.id ?? "";
     if (s.timers.breakPattern === id) s.timers.breakPattern = s.patterns[0]?.id ?? "";
     saveSettings($state.snapshot(s));
-    emitChanged();
+    emitEvent("settings-changed");
   }
 
   // ---- skin import ----
@@ -386,11 +389,12 @@
   let previewBox = $state();
   let previewMounted = null;
   let apTheme = $state("#888888"); // current skin's authored anchor, for the swatch baseline
+  let apSkin = $state(null); // current skin, for its own text color
 
   // A text line's color as the bubble shows it: its own, else the shared default.
   const lineFont = (line) => ap[line + "Font"] || ap.font;
   let apLine = $state("label"); // Text tab: 'label' = top line, 'sub' = bottom line
-  const lineColor = (line) => ap[line + "Color"] || ap.textColor || "#eef6ff";
+  const lineColor = (line) => ap[line + "Color"] || baseTextColor(ap, apSkin);
 
   $effect(() => {
     const name = ap.skin || "orb";
@@ -406,6 +410,7 @@
       }
       if (!cancelled && previewBox) {
         apTheme = skin.manifest.themeColor || "#888888";
+        apSkin = skin;
         previewMounted = mountSkin(previewBox, skin, fill ? { fill } : {});
       }
     })();
@@ -425,23 +430,21 @@
       music: x.music,
     });
   let live = $state(true);
-  let liveBase = livePart(loadSettings()),
+  let liveBase = livePart(saved),
     livePushed = liveBase; // what the bubble has; "" forces the next push
+  const saveLive = (json) => saveSettings({ ...loadSettings(), ...JSON.parse(json) });
   async function pushAppearance(json) {
-    saveSettings({ ...loadSettings(), ...JSON.parse(json) });
+    saveLive(json);
     livePushed = json;
-    if (!inTauri) return;
-    const { emit } = await import("@tauri-apps/api/event");
-    await emit("appearance-live");
+    await emitEvent("appearance-live");
   }
   // The other direction: a change made in the bubble's edit mode while Live update is on.
   // Saved here, but not sent back — the bubble already shows it.
   function liveFromBubble({ payload }) {
     if (!live || !payload) return;
     applyBubbleChanges(s, payload);
-    const json = livePart(s);
-    saveSettings({ ...loadSettings(), ...JSON.parse(json) });
-    livePushed = json;
+    livePushed = livePart(s);
+    saveLive(livePushed);
   }
   function toggleLive() {
     live = !live;
@@ -455,29 +458,28 @@
     return () => clearTimeout(timer);
   });
 
-  async function emitChanged() {
-    if (!inTauri) return;
-    const { emit } = await import("@tauri-apps/api/event");
-    await emit("settings-changed");
+  // Cancel, the title bar's X and Quit: put back what was saved before the live changes.
+  // shortcut: Quit from the tray menu skips this and keeps the live changes; upgrade by having
+  // Rust close this window before it exits.
+  async function undoLive() {
+    live = false;
+    if (liveBase && liveBase !== livePushed) await pushAppearance(liveBase);
   }
 
   async function close() {
-    live = false;
-    if (liveBase && liveBase !== livePushed) await pushAppearance(liveBase); // undo live changes
+    await undoLive();
     if (!inTauri) return;
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     await getCurrentWindow().close();
   }
 
   async function onSave() {
+    live = false; // closing: nothing more goes to or comes from the bubble's edit mode
     const snap = $state.snapshot(s);
     saveSettings(snap);
     liveBase = null; // saved: nothing for close() to undo
-    await emitChanged();
-    if (inTauri) {
-      const { emit } = await import("@tauri-apps/api/event");
-      await emit("apply-tray-text", snap.text.tray);
-    }
+    await emitEvent("settings-changed");
+    await emitEvent("apply-tray-text", snap.text.tray);
     await close();
   }
 
@@ -500,10 +502,25 @@
   }
 
   async function onExit() {
-    if (!inTauri) return;
-    const { emit } = await import("@tauri-apps/api/event");
-    await emit("app-quit");
+    await undoLive();
+    await emitEvent("app-quit");
   }
+
+  // A typed hex color is taken once complete (Enter / leaving the field); empty = the default.
+  // The color already shown is never taken: it would turn the skin's own color (or the default
+  // text color) into a custom one.
+  function typedColor(e, set, shown) {
+    const text = e.target.value.trim(),
+      c = parseHex(text);
+    if ((c || !text) && c !== parseHex(shown())) set(c || "");
+    e.target.value = shown(); // also puts the current color back after a mistyped one
+  }
+  // While typing: only a full 6-digit code, so the field is not rewritten under the cursor
+  // (Enter / leaving the field still takes 3-digit codes via typedColor).
+  const fullHex = (e, shown) => {
+    const c = /^#?[0-9a-f]{6}$/i.test(e.target.value.trim()) ? parseHex(e.target.value) : null;
+    return c !== parseHex(shown) ? c : null;
+  };
 
   onMount(() => {
     document.body.classList.add("settings-body");
@@ -525,6 +542,7 @@
     let unlistenBubble = null;
     let unlistenEdit = null;
     let unlistenMove = null;
+    let unlistenClose = null;
     if (inTauri) {
       (async () => {
         const { restoreWindowPosition, trackWindowPosition } = await import(
@@ -536,6 +554,7 @@
         await win.show(); // built hidden in Rust; reveal only after positioning (no flash)
         await win.setFocus();
         unlistenMove = await trackWindowPosition("settings", win);
+        unlistenClose = await win.onCloseRequested(undoLive); // title bar X = Cancel
 
         const { listen } = await import("@tauri-apps/api/event");
         unlisten = await listen("pattern-editor-saved", refreshPatterns);
@@ -554,6 +573,7 @@
       unlistenBubble?.();
       unlistenEdit?.();
       unlistenMove?.();
+      unlistenClose?.();
       window.removeEventListener("focus", refreshPatterns);
       preview.dispose();           // a running "Listen" must not outlive this view
     };
@@ -576,6 +596,12 @@
     if (!payload) return;
     applyBubbleChanges(s, payload);
     if (live) livePushed = livePart(s); // the bubble saved it itself: nothing to send back
+    if (liveBase) {
+      // ...and Cancel must not undo it
+      const base = { ...JSON.parse(liveBase), behavior: {} };
+      applyBubbleChanges(base, payload);
+      liveBase = livePart(base);
+    }
   }
 
   // Appearance preview: the bubble is built at its real size, with the bubble window's own text
@@ -685,12 +711,19 @@
       <input
         class="ctl small"
         aria-label={title + " color hex"}
-        bind:value={() => lineColor(line), (v) => setLineColor(ap, line, v)}
+        value={lineColor(line)}
+        oninput={(e) => {
+          const c = fullHex(e, lineColor(line));
+          if (c) setLineColor(ap, line, c);
+        }}
+        onchange={(e) =>
+          typedColor(e, (c) => setLineColor(ap, line, c), () => lineColor(line))}
       />
       <button
         class="btn icon"
         disabled={!ap[line + "Color"]}
         onclick={() => setLineColor(ap, line, "")}
+        aria-label="Reset color"
         title="Back to the default text color">↺</button
       >
     </div>
@@ -1129,16 +1162,24 @@
                   <input
                     class="ctl small"
                     aria-label="Bubble color hex"
-                    bind:value={
-                      () => s.skinColors[ap.skin] ?? apTheme,
-                      (v) => setSkinColor(s, ap.skin, v)
-                    }
+                    value={s.skinColors[ap.skin] ?? apTheme}
+                    oninput={(e) => {
+                      const c = fullHex(e, s.skinColors[ap.skin] ?? apTheme);
+                      if (c) setSkinColor(s, ap.skin, c);
+                    }}
+                    onchange={(e) =>
+                      typedColor(
+                        e,
+                        (c) => setSkinColor(s, ap.skin, c),
+                        () => s.skinColors[ap.skin] ?? apTheme,
+                      )}
                   />
                   <button
                     class="btn icon"
                     disabled={!(ap.skin in s.skinColors)}
                     onclick={() => setSkinColor(s, ap.skin, "")}
-                    title="Reset color">↺</button
+                    aria-label="Reset color"
+                    title="Back to the skin's own colors">↺</button
                   >
                 </div>
               </div>
@@ -1180,7 +1221,6 @@
                 <!-- Per line: the same keys and limits as dragging a line in the bubble's edit mode. -->
                 {@render offsetRow("Top line", "labelOffsetX", "labelOffsetY", lineOffsetRange(ap))}
                 {@render offsetRow("Bottom line", "subOffsetX", "subOffsetY", lineOffsetRange(ap))}
-                {@render offsetRow("Both lines", "textOffsetX", "textOffsetY", { x: [-1000, 1000], y: [-1000, 1000] })}
               </div>
             {/if}
           </div>
@@ -1415,7 +1455,8 @@
     --rail: #121215;
     --fore: #f2f2f2;
     --muted: #9aa0aa;
-    --accent: #4fc3f7;
+    /* Brand pair, from drawbreath's breath ink: blue = exhale / accent, pink = inhale / break. */
+    --accent: #4d9abf;
     --accentFg: #06222c;
     --line: rgba(255, 255, 255, 0.1);
     --field: rgba(255, 255, 255, 0.07);
@@ -1425,8 +1466,8 @@
     --seg: rgba(255, 255, 255, 0.08);
     --segSel: rgba(255, 255, 255, 0.92);
     --segSelFg: #1a1a1f;
-    --brk: #ffb74d;
-    --brkFg: #2b1a00;
+    --brk: #d4577f;
+    --brkFg: #1f0a12;
   }
   .win[data-theme="light"] {
     --card: #f3f3f6;
@@ -1435,18 +1476,18 @@
     --rail: #ececf2;
     --fore: #1a1a1f;
     --muted: #5a5a63;
-    --accent: #0a6cc9;
-    --accentFg: #ffffff;
+    --accent: #4d9abf;
+    --accentFg: #06222c;
     --line: rgba(0, 0, 0, 0.1);
     --field: #ffffff;
     --cardbg: #ffffff;
-    --railSel: #0a6cc9;
-    --railSelFg: #ffffff;
+    --railSel: #4d9abf;
+    --railSelFg: #06222c;
     --seg: #e2e2ea;
     --segSel: #ffffff;
     --segSelFg: #1a1a1f;
-    --brk: #c2620a;
-    --brkFg: #ffffff;
+    --brk: #d4577f;
+    --brkFg: #1f0a12;
   }
 
   .win {
@@ -1500,11 +1541,6 @@
     background: var(--pane);
     overflow: auto;
     padding: 18px 20px;
-  }
-  .pane h2 {
-    margin: 2px 0 0;
-    font-size: 18px;
-    font-weight: 600;
   }
   /* Appearance head row: [ spacer | Work/Break centered | theme toggle right ] */
   .panehead {
@@ -1716,24 +1752,9 @@
   }
 
   /* preview card: [ tabs + preview + color  |  divider  |  skins ] — left 3/5, skins 2/5 */
-  .prev-textbody {
-    display: flex;
-    align-items: stretch;
-    flex: 1;
-    min-height: 150px;
-  }
   .orb {
     display: grid;
     place-items: center;
-  }
-  .tq-phases {
-    display: flex;
-    gap: 6px;
-  }
-  .tq-phases input.ctl {
-    flex: 1;
-    width: auto;
-    min-width: 0;
   }
   .btn.icon {
     width: 30px;
@@ -1781,7 +1802,7 @@
     margin: 0 auto 3px;
     background: radial-gradient(
       circle at 50% 44%,
-      rgba(79, 195, 247, 0.09),
+      rgba(77, 154, 191, 0.09),
       transparent 70%
     );
   }
@@ -1803,7 +1824,7 @@
     overflow: hidden;
     border-right: 1px solid var(--line);
     /* stands in for a desktop wallpaper, so the (usually white) bubble text reads in both themes */
-    background: linear-gradient(135deg, #27405f, #5b3f6e 60%, #a8576a);
+    background: linear-gradient(135deg, #4d9abf, #d4577f);
   }
   /* the bubble at real size, scaled down from the top centre of its skin */
   .mini {
@@ -1831,14 +1852,6 @@
     letter-spacing: 2px;
     opacity: 0.65;
     min-height: 18px;
-  }
-  .text-controls .sliderwrap {
-    flex: none;
-    max-width: none;
-    width: 100%;
-  }
-  .tq-slider {
-    max-width: none;
   }
 
   /* searchable font dropdown — matches the size-slider width */
@@ -1995,22 +2008,22 @@
     font-weight: 600;
     line-height: 22px;
     color: #14141a;
-    background: #b9bec7; /* hold */
+    background: #8a827a; /* hold — phase colors = drawbreath's line ink, same as the pattern editor */
   }
   .dot {
     flex: none;
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #b9bec7;
+    background: #8a827a;
   }
   .pbar .ph-in,
   .dot.ph-in {
-    background: #7bd88f;
+    background: #d4577f;
   }
   .pbar .ph-out,
   .dot.ph-out {
-    background: #b388ff;
+    background: #4d9abf;
   }
   .words {
     display: grid;
@@ -2072,14 +2085,6 @@
     font-size: 11.5px;
     line-height: 1.4;
   }
-  .editor-foot {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 14px;
-    padding-top: 12px;
-    border-top: 1px solid var(--line);
-  }
 
   /* skin gallery */
   .skin-gallery {
@@ -2101,7 +2106,7 @@
     border-radius: 8px;
     background: radial-gradient(
       circle at 50% 44%,
-      rgba(79, 195, 247, 0.09),
+      rgba(77, 154, 191, 0.09),
       transparent 70%
     );
   }

@@ -31,7 +31,8 @@ const jsCalls = (fn, ev) => jsSources.includes(`${fn}('${ev}'`) || jsSources.inc
 
 test('JS->Rust events are emitted in JS and listened for in Rust', () => {
   for (const ev of JS_TO_RUST) {
-    assert.ok(jsCalls('emit', ev), `JS should emit '${ev}'`);
+    // emitEvent = the windows' own wrapper around emit
+    assert.ok(jsCalls('emit', ev) || jsCalls('emitEvent', ev), `JS should emit '${ev}'`);
     assert.ok(libRs.includes(`listen_any("${ev}"`), `Rust should listen_any for "${ev}"`);
   }
 });

@@ -28,3 +28,19 @@ test('every shared key exists in the default appearance', () => {
     for (const [k] of LINE_PARTS[line]) assert.ok(k in ap, k);
   }
 });
+
+test('baseTextColor: shared text color, else the skin\'s, else the default', async () => {
+  const { baseTextColor } = await import('../src/lib/appearance-edit.js');
+  const skin = { manifest: { text: { color: '#112233' } } };
+  assert.equal(baseTextColor({ textColor: '#ABCDEF' }, skin), '#ABCDEF');
+  assert.equal(baseTextColor({ textColor: '' }, skin), '#112233');
+  assert.equal(baseTextColor({}, { manifest: {} }), '#eef6ff');
+  assert.equal(baseTextColor({}, null), '#eef6ff');   // settings window before the skin loaded
+});
+
+test('parseHex takes complete colors only', async () => {
+  const { parseHex } = await import('../src/lib/appearance-edit.js');
+  assert.equal(parseHex('#abc'), '#AABBCC');
+  assert.equal(parseHex(' 12ab9f '), '#12AB9F');
+  for (const half of ['', '#', '#12', '#12ab', '#12ab9', 'red', '#12ab9fz']) assert.equal(parseHex(half), null);
+});

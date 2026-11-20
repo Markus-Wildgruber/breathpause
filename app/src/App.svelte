@@ -8,7 +8,7 @@
   import { setupHoverDrag, setHoverDragActive, setPinned } from './lib/interactivity.js';
   import { loadSettings, saveSettings, mergePatch, modeKey, bubbleChanges } from './lib/settings-store.js';
   import { editLayout, editMargin } from './lib/edit-layout.js';
-  import { BUBBLE_RANGE, SIZE_RANGE, LINE_PARTS, lineOffsetRange, setSkinColor, setLineColor } from './lib/appearance-edit.js';
+  import { BUBBLE_RANGE, SIZE_RANGE, LINE_PARTS, lineOffsetRange, setSkinColor, setLineColor, parseHex, baseTextColor } from './lib/appearance-edit.js';
   import { createMusic, musicStep } from './lib/music.js';
   import { createPauseReasons } from './lib/pause-reasons.js';
 
@@ -176,9 +176,8 @@
     // posRight 0 the skin sits flush in the top-right corner. Grows down-left as size changes.
     const winW = ap.sizePx;
     const winH = ap.sizePx + 64;
-    const dpr = window.devicePixelRatio || 1;
-    const screenW = window.screen.availWidth / dpr;
-    const x = Math.max(0, screenW - winW - (ap.posRight ?? 40));
+    // screen.availWidth is in CSS px, like the logical sizes used here
+    const x = Math.max(0, window.screen.availWidth - winW - (ap.posRight ?? 40));
     const y = Math.max(0, ap.posTop ?? 40);
     await win.setSize(new LogicalSize(winW, winH));
     await win.setPosition(new LogicalPosition(x, y));
@@ -193,7 +192,7 @@
     const skin = await skinFor(mode);
     if (destroyed) return;                 // torn down (hot reload) while the skin loaded
     currentSkin = skin;
-    textColor = ap.textColor || skin.manifest.text?.color || '#eef6ff';
+    textColor = baseTextColor(ap, skin);
     mounted = mountSkin(stage, skin, { fill: settings.skinColors?.[ap.skin] });
     await applyWindowForMode(mode);
   }
@@ -210,17 +209,15 @@
 
   // ===== bubble edit mode: drag/size/color each text line =====
   // Ranges, line parts and color setters are shared with the settings window (appearance-edit.js).
-  const PRESETS = ['#FFFFFF', '#EEF6FF', '#FFD166', '#F4A261', '#E76F51', '#EF476F',
-                   '#06D6A0', '#2EC4B6', '#118AB2', '#8E7DFF', '#9AA0A6'];
-  // Room (CSS px) the window grows by on each side: side rail (76) + color panel (190) + gaps.
+  // Room (CSS px) the window grows by on each side: the side rail (84) + gap, and the skin strip
+  // (~260 wide) running past a small bubble.
   const EDIT_ROOM = 300;
   // Below the bubble: the text (64) and the skin strip under it.
   const EDIT_BELOW = 64 + 76;
 
   let editing = $state(false);
   let selected = $state(null);       // 'bubble' | 'label' | 'sub' | null
-  let colorOpen = $state(false);
-  let hexDraft = $state('');
+  let hexDraft = $state('');         // the side panel's hex field (synced on select / skin load)
   let dialog = $state(null);         // 'hide' | 'save' | null
   let dontAsk = $state(false);
   let editPad = $state(null);        // editLayout() result while the window is widened
@@ -251,6 +248,10 @@
     if (parts.includes('edit')) {
       fresh.appearance.work = $state.snapshot(settings.appearance.work);
       fresh.skinColors = $state.snapshot(settings.skinColors);
+      // Changes count from where edit mode started: a settings window with Live update on
+      // has stored them already, and must still be told they are now saved.
+      before.appearance.work = editSnapshot.work;
+      before.skinColors = editSnapshot.skinColors;
     }
     if (parts.includes('behavior')) {
       fresh.behavior.hideNoticeOff = settings.behavior.hideNoticeOff;
@@ -294,9 +295,11 @@
 
   // Load + mount whatever ap.skin now names (after a skin switch, or a discard that undid one).
   async function refreshSkin() {
-    const skin = await skinFor('work');
+    const skin = await skinFor(currentMode);
+    if (destroyed) return;
     currentSkin = skin;
-    textColor = ap.textColor || skin.manifest.text?.color || '#eef6ff';
+    textColor = baseTextColor(ap, skin);
+    hexDraft = shownColor();               // a new skin brings its own color
     remountSkin();
   }
 
@@ -309,7 +312,6 @@
   function switchSkin(id) {
     if (ap.skin === id) return;
     ap.skin = id;
-    colorOpen = false;
     refreshSkin();
   }
 
@@ -365,6 +367,11 @@
     selected = null;
     setPinned(true);
     await expandWindow();
+    // Start with the bubble selected, once the window knows which side the panel goes on.
+    if (editing && !selected) {
+      selected = 'bubble';
+      hexDraft = shownColor();
+    }
   }
 
   // relayout=false when a mode switch is about to lay the window out (and mount its skin) anyway.
@@ -372,7 +379,6 @@
     if (!editing) return;
     editing = false;
     selected = null;
-    colorOpen = false;
     dialog = null;
     if (save) {
       await persistBubbleSettings('edit', 'behavior');   // behavior: "Always save" from the dialog
@@ -390,10 +396,7 @@
   }
 
   function editChanged() {
-    return JSON.stringify({
-      work: $state.snapshot(settings.appearance.work),
-      skinColors: $state.snapshot(settings.skinColors),
-    }) !== JSON.stringify(editSnapshot);
+    return JSON.stringify(editState()) !== JSON.stringify(editSnapshot);
   }
 
   // The ✕ button: close edit mode, asking about unsaved changes unless "save on close" is set.
@@ -403,10 +406,9 @@
     else { dontAsk = false; dialog = 'save'; }
   }
 
-  // Esc peels back one layer at a time: dialog, color panel, then edit mode (as ✕).
+  // Esc peels back one layer at a time: dialog, then edit mode (as ✕).
   function escInEdit() {
     if (dialog) { dialog = null; return; }
-    if (colorOpen) { colorOpen = false; return; }
     closeEdit();
   }
 
@@ -436,7 +438,7 @@
     if (!editing || e.button !== 0) return;
     e.preventDefault();
     selected = which;
-    colorOpen = false;
+    hexDraft = shownColor();
     const el = e.currentTarget;
     const kx = which + 'OffsetX', ky = which + 'OffsetY';
     const startX = e.clientX - (ap[kx] ?? 0), startY = e.clientY - (ap[ky] ?? 0);
@@ -465,11 +467,11 @@
   function selectBubble(e) {
     if (!editing || e.button !== 0) return;
     selected = 'bubble';
-    colorOpen = false;
+    hexDraft = shownColor();
   }
 
   function deselect(e) {
-    if (editing && !e.target.closest('.edit-ui, .tline, .stage')) { selected = null; colorOpen = false; }
+    if (editing && !e.target.closest('.edit-ui, .tline, .stage')) selected = null;
   }
 
   // Color of the selection: a text line's own color, or the bubble's per-skin fill.
@@ -483,11 +485,6 @@
     return selColor() || textColor;
   }
 
-  function openColor() {
-    hexDraft = shownColor();
-    colorOpen = !colorOpen;
-  }
-
   function setColor(c) {
     if (selected === 'bubble') {
       setSkinColor(settings, ap.skin, c);
@@ -499,11 +496,10 @@
   }
 
   function onHexInput() {
-    const m = hexDraft.trim().match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
-    if (!m) return;
-    const h = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1];
+    const c = parseHex(hexDraft);
+    if (!c) return;
     const draft = hexDraft;
-    setColor('#' + h.toUpperCase());
+    setColor(c);
     hexDraft = draft;                      // don't rewrite the field while the user types
   }
 
@@ -642,58 +638,59 @@
       // music; show them without the full settings-changed pass (timers, hotkeys, autostart).
       listen('appearance-live', async () => {
         const saved = loadSettings();
+        const musicWasOn = settings.music.on;
         settings.music = saved.music;
         syncMusic();
-        emitMusicState();
-        if (editing) {
-          // Edit mode is open: take the values in place (ap keeps pointing at them) and leave
-          // the widened window alone.
-          Object.assign(settings.appearance.work, saved.appearance.work);
-          Object.assign(settings.appearance.break, saved.appearance.break);
-          settings.skinColors = saved.skinColors;
-          settings.customSkins = saved.customSkins;
-          editSent = JSON.stringify(editState());   // came from settings: don't send it back
-          for (const k of Object.keys(skins)) delete skins[k];
-          await refreshSkin();
-          return;
-        }
-        settings.appearance = saved.appearance;
+        if (saved.music.on !== musicWasOn) emitMusicState();
+        // A slider sends many of these in a row: redo only what the change needs.
+        const look = () => JSON.stringify([ap.skin, settings.skinColors[ap.skin]]);
+        const place = () => [ap.sizePx, ap.posRight, ap.posTop].join();
+        const hadLook = look(), hadPlace = place();
+        // In place, so ap keeps pointing at the current mode's values.
+        Object.assign(settings.appearance.work, saved.appearance.work);
+        Object.assign(settings.appearance.break, saved.appearance.break);
         settings.skinColors = saved.skinColors;
-        settings.customSkins = saved.customSkins;
-        for (const k of Object.keys(skins)) delete skins[k];
-        await showMode(pomo.mode);
+        const skinsChanged = JSON.stringify(saved.customSkins) !== JSON.stringify(settings.customSkins);
+        if (skinsChanged) {
+          settings.customSkins = saved.customSkins;
+          for (const k of Object.keys(skins)) delete skins[k];
+        }
+        if (editing) editSent = JSON.stringify(editState());   // came from settings: don't send it back
+        if (skinsChanged || look() !== hadLook) await refreshSkin();
+        // The break overlay and the widened edit window are not laid out from here.
+        if (!editing && currentMode === 'work' && place() !== hadPlace) await applyWindowForMode('work');
       });
 
       // Persist manual drags (work only): keep the saved corner offset in sync with reality.
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       let moveTimer, liveSentAt = 0;
       getCurrentWindow().onMoved(({ payload: { x, y } }) => {
-        if (currentMode !== 'work') return;   // break is fullscreen — nothing to persist
+        // Only the user's own drags in work mode: the break is fullscreen, and edit mode and
+        // layouts move the window from code.
+        if (currentMode !== 'work' || ownMove || editing || destroyed) return;
         const where = () => {
-          const dpr = window.devicePixelRatio || 1;
-          const screenW = window.screen.availWidth / dpr;
+          const dpr = window.devicePixelRatio || 1;   // x/y are physical px, the rest CSS px
           return {
-            posRight: Math.max(0, Math.round(screenW - settings.appearance.work.sizePx - x / dpr)),
+            posRight: Math.max(0, Math.round(window.screen.availWidth - settings.appearance.work.sizePx - x / dpr)),
             posTop: Math.max(0, Math.round(y / dpr)),
           };
         };
-        // While the user drags: a live settings window shows the position as it changes.
+        // While dragging: a live settings window shows the position as it changes.
         // Nothing is stored here until the drag has settled (below).
-        if (!ownMove && !editing && !destroyed && Date.now() - liveSentAt > 50) {
+        if (Date.now() - liveSentAt > 50) {
           liveSentAt = Date.now();
           emitEvent('bubble-edit-live', { work: where() });
         }
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
-          if (editing || destroyed) return;   // edit mode widened the window; not a real move
-          const work = settings.appearance.work, pos = where();
-          const sent = liveSentAt;
-          liveSentAt = 0;
-          // Unchanged (e.g. our own layout) and nothing shown on the way: nothing to do.
-          if (work.posRight === pos.posRight && work.posTop === pos.posTop && !sent) return;
-          Object.assign(work, pos);
-          saveSettings($state.snapshot(settings));
-          emitEvent('bubble-edit-live', { work: pos });   // a live settings window follows
+          if (editing || destroyed) return;
+          const pos = where();
+          Object.assign(settings.appearance.work, pos);
+          // Onto a fresh load: only the position is this drag's to save.
+          const fresh = loadSettings();
+          Object.assign(fresh.appearance.work, pos);
+          saveSettings(fresh);
+          emitEvent('bubble-settings-saved', { work: pos });   // settings window: live or not
         }, 300);
       });
     }
@@ -849,36 +846,24 @@
           </div>
         {/if}
       </div>
-      <button class="swatch" style:background={shownColor()} onclick={openColor}
-              title={selected === 'bubble' ? 'Bubble color' : 'Text color'}
-              aria-label={selected === 'bubble' ? 'Bubble color' : 'Text color'}></button>
+      <div class="color-row">
+        <!-- The swatch is the native color input itself: one click opens the OS picker. -->
+        <label class="swatch" style:background={shownColor()}
+               title={selected === 'bubble' ? 'Bubble color' : 'Text color'}>
+          <input type="color" value={shownColor()}
+                 oninput={(e) => setColor(e.currentTarget.value.toUpperCase())}
+                 aria-label={selected === 'bubble' ? 'Bubble color' : 'Text color'} />
+        </label>
+        <button class="hex-reset" onclick={() => setColor('')} aria-label="Reset color"
+                title={selected === 'bubble' ? 'Back to the skin\'s own colors' : 'Back to the default text color'}>↺</button>
+      </div>
+      <input class="hex" bind:value={hexDraft} oninput={onHexInput} maxlength="7"
+             spellcheck="false" aria-label="Hex color" />
       {#if selected !== 'bubble'}
         <div class="parts">
           {#each LINE_PARTS[selected] as [key, name] (key)}
-            <label class="part"><input type="checkbox" bind:checked={ap[key]} /> {name}</label>
+            <label class="part">{name}<input type="checkbox" class="sw" bind:checked={ap[key]} /></label>
           {/each}
-        </div>
-      {/if}
-      {#if colorOpen}
-        <div class="color-panel">
-          <div class="presets">
-            <!-- First tile = free pick: the native color picker, dressed as a swatch. -->
-            <label class="preset custom" title="Custom color">
-              <svg viewBox="0 0 16 16"><path d="M8 4v8M4 8h8" /></svg>
-              <input type="color" value={shownColor()}
-                     oninput={(e) => setColor(e.currentTarget.value.toUpperCase())} aria-label="Custom color" />
-            </label>
-            {#each PRESETS as c (c)}
-              <button class="preset" class:on={selColor().toUpperCase() === c}
-                      style:background={c} onclick={() => setColor(c)} title={c} aria-label={c}></button>
-            {/each}
-          </div>
-          <div class="hex-row">
-            <input class="hex" bind:value={hexDraft} oninput={onHexInput} maxlength="7"
-                   spellcheck="false" aria-label="Hex color" />
-            <button class="hex-reset" onclick={() => setColor('')}
-                    title={selected === 'bubble' ? 'Back to the skin\'s own colors' : 'Back to the default text color'}>Default</button>
-          </div>
         </div>
       {/if}
     </div>
@@ -1069,7 +1054,7 @@
     --ui-line: rgba(255, 255, 255, 0.16);
     --ui-field: #2a2a2e;
     --ui-btn: #3a3a3f;
-    --ui-accent: #4fc3f7;
+    --ui-accent: #4d9abf;
   }
   main[data-theme="light"] {
     --ui-bg: rgba(251, 251, 253, 0.92);
@@ -1080,7 +1065,7 @@
     --ui-line: rgba(0, 0, 0, 0.14);
     --ui-field: #ffffff;
     --ui-btn: #e2e2ea;
-    --ui-accent: #0a6cc9;
+    --ui-accent: #4d9abf;
   }
   .bubble-btns {
     position: absolute;
@@ -1116,7 +1101,7 @@
     border-radius: 11px;
   }
   main.breaking .music-btn svg { width: 18px; height: 18px; }
-  .bb svg, .preset.custom svg {
+  .bb svg {
     width: 14px;
     height: 14px;
     fill: none;
@@ -1144,7 +1129,7 @@
     position: absolute;
     top: 8px;
     box-sizing: border-box;
-    width: 76px;             /* fixed, so the color panel beside it always fits EDIT_ROOM */
+    width: 84px;             /* fixed, so it always fits EDIT_ROOM; "Sessions" + switch fit */
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1177,16 +1162,26 @@
     margin: 0;
     accent-color: var(--ui-accent);
   }
-  .swatch {
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border-radius: 50%;
-    border: 2px solid var(--ui-line);
-    box-shadow: 0 0 0 1px var(--ui-bg);
+  .color-row { display: flex; align-items: center; gap: 4px; }
+  .swatch {                  /* same square as the ↺ button beside it */
+    position: relative;
+    box-sizing: border-box;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--ui-line);
+    cursor: pointer;
+  }
+  .swatch input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;              /* the swatch is the look; the input underneath opens the picker */
     cursor: pointer;
   }
   .parts {
+    align-self: stretch;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1195,74 +1190,61 @@
   .part {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 4px;
     white-space: nowrap;
     cursor: pointer;
   }
-  .part input { margin: 0; cursor: pointer; accent-color: var(--ui-accent); }
-  .color-panel {
-    position: absolute;
-    top: 0;
-    box-sizing: border-box;
-    width: 190px;
-    padding: 10px;
-    border-radius: 10px;
-    background: var(--ui-card);
-    border: 1px solid var(--ui-line);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  }
-  .side.right .color-panel { left: calc(100% + 8px); }
-  .side.left .color-panel { right: calc(100% + 8px); }
-  .presets {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 6px;
-  }
-  .preset {
-    aspect-ratio: 1;
-    padding: 0;
-    border-radius: 6px;
-    border: 1px solid var(--ui-line);
-    cursor: pointer;
-  }
-  .preset.on { outline: 2px solid var(--ui-accent); outline-offset: 1px; }
-  .preset.custom {
+  /* The settings window's toggle switch (.sw), scaled down for the side panel. */
+  .sw {
+    appearance: none;
+    flex: none;
     position: relative;
-    display: grid;
-    place-items: center;
-    color: #fff;
-    background: conic-gradient(#ef476f, #ffd166, #06d6a0, #118ab2, #8e7dff, #ef476f);
-  }
-  .preset.custom input {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;              /* the tile is the look; the input underneath opens the picker */
+    width: 28px;
+    height: 16px;
+    margin: 0;
+    border-radius: 8px;
+    border: 1px solid var(--ui-line);
+    background: var(--ui-btn);
     cursor: pointer;
+    transition: background 0.15s;
   }
-  .hex-row {
-    display: flex;
-    gap: 6px;
-    margin-top: 10px;
+  .sw::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: left 0.15s;
   }
+  .sw:checked { background: var(--ui-accent); }
+  .sw:checked::after { left: 13px; }
+  .sw:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
   .hex {
-    flex: 1;
-    min-width: 0;
-    padding: 5px 7px;
+    box-sizing: border-box;
+    width: 100%;             /* the side panel's inner width: fits "#RRGGBB" at 11px */
+    padding: 4px 2px;
+    text-align: center;
     border-radius: 6px;
     border: 1px solid var(--ui-line);
     background: var(--ui-field);
     color: var(--ui-fg);
-    font: 12px ui-monospace, Consolas, monospace;
+    font: 11px ui-monospace, Consolas, monospace;
   }
+  .side .hex { cursor: text; }
   .hex-reset {
-    padding: 5px 8px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
     border-radius: 6px;
     border: 0;
     background: var(--ui-btn);
     color: var(--ui-fg);
-    font: 11px 'Segoe UI', sans-serif;
+    font: 14px 'Segoe UI', sans-serif;
     cursor: pointer;
   }
   .skins {
@@ -1345,8 +1327,7 @@
     font-size: 11.5px;
   }
   .confirm-backdrop.mini .cb { padding: 7px 12px; font-size: 12.5px; }
-  .cb-ok { background: var(--ui-accent); }
-  main[data-theme="dark"] .cb-ok { color: #06222c; }
+  .cb-ok { background: var(--ui-accent); color: #06222c; }   /* dark text: the blue is mid-tone in both themes */
   .cb-plain { background: var(--ui-btn); color: var(--ui-fg); }
   .cb-yes { background: #e05252; }   /* default answer = leave */
   .cb-yes:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
